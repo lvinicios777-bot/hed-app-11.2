@@ -27,6 +27,7 @@ from kivy.uix.textinput import TextInput
 from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_CP, MI_PP, VERSAO,
                       RESULTADOS, analisar, relatorio, novo_registro, analise_registro)
 import hed_fontes as F
+from hed_tabuleiro import TelaAnalise
 
 FEN_INICIAL = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -121,7 +122,7 @@ class TelaLista(Screen):
         a1.add_widget(botao("Analisar", self.analisar, VERDE))
         raiz.add_widget(a1)
         a2 = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8))
-        a2.add_widget(botao("Posição (FEN)", lambda: app.ir("posicao"), (0.7, 0.45, 0.15, 1)))
+        a2.add_widget(botao("Tabuleiro / análise", lambda: app.ir("analise"), (0.7, 0.45, 0.15, 1)))
         a2.add_widget(botao("Registro", lambda: app.ir("registro"), (0.45, 0.35, 0.6, 1)))
         raiz.add_widget(a2)
         a3 = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8))
@@ -502,7 +503,8 @@ class TelaConfig(Screen):
         self.sl = {}
         for chave, rot, mn, mx, passo in (("tempo", "Tempo por busca (s)", 1, 20, 1),
                                           ("multipv", "Linhas do motor (MultiPV)", 1, 8, 1),
-                                          ("extras", "Lances do banco a avaliar", 0, 5, 1)):
+                                          ("extras", "Lances do banco a avaliar", 0, 5, 1),
+                                          ("prof_vivo", "Profundidade ao vivo (tabuleiro)", 14, 40, 1)):
             linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
             lb = Label(text=f"{rot}: {c[chave]:.0f}", size_hint_x=0.55, halign="left", valign="middle")
             lb.bind(size=lambda w, s: setattr(w, "text_size", s))
@@ -552,12 +554,13 @@ class HEDApp(App):
         self.mi_cp, self.mi_pp, self.indice = MI_CP, MI_PP, None
         self.ultimo, self.ultima_estrutura = None, ""
         self.cfg, self.fen = dict(F.CFG_PADRAO), ""
+        self.partida = {"inicio": FEN_INICIAL, "lances": [], "idx": 0}
         self.motor, self._trava_motor = None, threading.Lock()
         self.carregar()
         self.sm = ScreenManager(transition=NoTransition())
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
                           ("registrar", TelaRegistrar), ("registro", TelaRegistro),
-                          ("posicao", TelaPosicao), ("config", TelaConfig)):
+                          ("posicao", TelaPosicao), ("config", TelaConfig), ("analise", TelaAnalise)):
             self.sm.add_widget(cls(name=nome))
         self.sm.current = "lista"
         return self.sm
@@ -569,7 +572,7 @@ class HEDApp(App):
                 caminho = F.caminho_stockfish()
                 if caminho:
                     try:
-                        self.motor = F.Motor(caminho)
+                        self.motor = F.MotorVivo(caminho)
                     except Exception:
                         self.motor = None
             return self.motor
@@ -590,6 +593,7 @@ class HEDApp(App):
             self.ultima_estrutura = dados.get("ultima_estrutura", "")
             self.cfg.update(dados.get("cfg", {}))
             self.fen = dados.get("fen", "")
+            self.partida = dados.get("partida", self.partida)
         except (OSError, ValueError, TypeError):
             pass
 
@@ -599,7 +603,7 @@ class HEDApp(App):
                 json.dump({"mi_cp": self.mi_cp, "mi_pp": self.mi_pp,
                            "cands": [c.para_dict() for c in self.cands],
                            "registro": self.registro, "ultima_estrutura": self.ultima_estrutura,
-                           "cfg": self.cfg, "fen": self.fen},
+                           "cfg": self.cfg, "fen": self.fen, "partida": self.partida},
                           f, ensure_ascii=False)
         except OSError:
             pass

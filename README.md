@@ -19,6 +19,14 @@ Mesma filosofia e pipeline do 11.1.1; o 11.2 muda só a camada de medição.
 3. Ao terminar (~20–30 min na 1ª vez): execução → **Artifacts** → 'hed-apk'.
 4. Extraia o '.apk' no celular e instale.
 
+## Tabuleiro / análise (estilo Lichess)
+
+- Toque ou arraste as peças; pontos mostram os lances legais; promoção com escolha da peça.
+- Stockfish ao vivo: barra de avaliação, avaliação no padrão do Lichess (+0.35, #3), 3 linhas e seta azul do melhor lance. Toque numa linha para jogar o lance.
+- Navegação |< < > >|, Girar, lista de lances; jogar um lance no meio da partida cria a nova continuação.
+- Explorador Masters/Lichess embaixo do tabuleiro (toque no lance para jogá-lo).
+- Colar FEN ou PGN (exportado do Lichess), Copiar FEN, e **Enviar ao HED** (avalia os candidatos e importa para a decisão).
+
 ## Motor e banco de dados (tela "Posição (FEN)")
 
 1. Cole o FEN da posição (no Lichess: menu > Compartilhar > FEN) e toque em **Analisar**.

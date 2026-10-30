@@ -30,6 +30,7 @@ CFG_PADRAO = {
     "ratings": "2000,2200,2500",
     "speeds": "blitz,rapid,classical",
     "extras": 3,                     # lances do banco avaliados além do MultiPV
+    "prof_vivo": 24,                 # profundidade da análise ao vivo no tabuleiro
 }
 
 
@@ -43,6 +44,10 @@ class Estat:
     n: int
     pts: float            # pontuação média de quem joga (0–1)
     rating: Optional[int] = None
+    brancas: int = 0      # vitórias das brancas / empates / vitórias das pretas
+    empates: int = 0
+    pretas: int = 0
+    san: str = ""
 
 
 @dataclass
@@ -169,7 +174,8 @@ def banco(board: chess.Board, base: str, token: str, cfg: Dict) -> (Dict[str, Es
         if n == 0:
             continue
         vit = mv["white"] if branco else mv["black"]
-        res[mv["uci"]] = Estat(n, (vit + mv["draws"] / 2) / n, mv.get("averageRating"))
+        res[mv["uci"]] = Estat(n, (vit + mv["draws"] / 2) / n, mv.get("averageRating"),
+                               mv["white"], mv["draws"], mv["black"], mv.get("san", ""))
     total = dados["white"] + dados["draws"] + dados["black"]
     nome = (dados.get("opening") or {}).get("name")
     return res, nome, total
@@ -282,6 +288,183 @@ class Motor:
             self.p.wait(timeout=2)
         except Exception:
             self.p.kill()
+
+
+class MotorVivo:
+    """Stockfish com leitura contínua: análise ao vivo (como no Lichess) e busca pontual.
+
+    Uma única instância (um processo) serve o tabuleiro e o HED.
+    """
+
+    def __init__(self, caminho: str, hash_mb: int = 64):
+        import threading
+        self.caminho = caminho
+        self.nome = "Stockfish"
+        self.p = subprocess.Popen([caminho], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        self._trava = threading.RLock()
+        self._dados = threading.Lock()
+        self._uciok, self._pronto_ev, self._fim = threading.Event(), threading.Event(), threading.Event()
+        self._fim.set()
+        self._info: Dict[int, dict] = {}
+        self._board: Optional[chess.Board] = None
+        self.ativo = True
+        threading.Thread(target=self._ler, daemon=True).start()
+        self._env("uci")
+        if not self._uciok.wait(10):
+            raise FonteErro("o Stockfish não respondeu")
+        threads = max(1, min(4, (os.cpu_count() or 2) - 1))
+        self._env("setoption name UCI_ShowWDL value true")
+        self._env(f"setoption name Threads value {threads}")
+        self._env(f"setoption name Hash value {hash_mb}")
+        self._sincronizar()
+
+    # ---- baixo nível
+    def _env(self, cmd):
+        self.p.stdin.write(cmd + "\n")
+        self.p.stdin.flush()
+
+    def _ler(self):
+        for linha in self.p.stdout:
+            t = linha.split()
+            if not t:
+                continue
+            if t[0] == "info" and "pv" in t and "score" in t and "lowerbound" not in t and "upperbound" not in t:
+                d = {"depth": int(t[t.index("depth") + 1]) if "depth" in t else 0}
+                k = t.index("score")
+                d[t[k + 1]] = int(t[k + 2])
+                if "wdl" in t:
+                    w = t.index("wdl")
+                    d["wdl"] = (int(t[w + 1]), int(t[w + 2]), int(t[w + 3]))
+                if "nodes" in t:
+                    d["nodes"] = int(t[t.index("nodes") + 1])
+                d["pv"] = t[t.index("pv") + 1:]
+                mpv = int(t[t.index("multipv") + 1]) if "multipv" in t else 1
+                with self._dados:
+                    self._info[mpv] = d
+            elif t[0] == "bestmove":
+                self._fim.set()
+            elif t[0] == "readyok":
+                self._pronto_ev.set()
+            elif t[0] == "uciok":
+                self._uciok.set()
+            elif t[0] == "id" and len(t) > 2 and t[1] == "name":
+                self.nome = " ".join(t[2:])
+        self.ativo = False
+        self._fim.set()
+
+    def _sincronizar(self):
+        self._pronto_ev.clear()
+        self._env("isready")
+        self._pronto_ev.wait(10)
+
+    def _parar(self):
+        if not self._fim.is_set():
+            self._env("stop")
+            self._fim.wait(5)
+
+    def _iniciar(self, board: chess.Board, multipv: int, go: str):
+        self._parar()
+        with self._dados:
+            self._info = {}
+            self._board = board.copy()
+        self._env(f"setoption name MultiPV value {multipv}")
+        self._env(f"position fen {board.fen()}")
+        self._sincronizar()
+        self._fim.clear()
+        self._env(go)
+
+    # ---- uso
+    def vivo(self, board: chess.Board, multipv: int = 3, profundidade: int = 24):
+        """Começa (ou reinicia) a análise ao vivo da posição; não bloqueia."""
+        if not self.ativo or board.is_game_over():
+            self.parar()
+            return
+        with self._trava:
+            self._iniciar(board, multipv, f"go depth {int(profundidade)}")
+
+    def parar(self):
+        with self._trava:
+            self._parar()
+
+    @property
+    def pensando(self) -> bool:
+        return not self._fim.is_set()
+
+    def linhas(self) -> (List[Opcao], int):
+        with self._dados:
+            info, board = dict(self._info), self._board
+        if board is None:
+            return [], 0
+        ops, prof = [], 0
+        for mpv in sorted(info):
+            d = info[mpv]
+            try:
+                m = chess.Move.from_uci(d["pv"][0])
+                san = board.san(m)
+            except (ValueError, IndexError, AssertionError):
+                continue
+            mate = d.get("mate")
+            cp = mate_para_cp(mate) if mate is not None else d.get("cp")
+            ops.append(Opcao(d["pv"][0], san, cp=cp, mate=mate, wdl=d.get("wdl"),
+                             pv=_san_pv(board, d["pv"], 10), multipv=mpv))
+            prof = max(prof, d["depth"])
+        return ops, prof
+
+    def buscar(self, board: chess.Board, multipv: int, tempo: float,
+               searchmoves: Optional[List[str]] = None) -> (List[Opcao], int):
+        cmd = f"go movetime {int(tempo * 1000)}"
+        if searchmoves:
+            cmd += " searchmoves " + " ".join(searchmoves)
+        with self._trava:
+            self._iniciar(board, multipv, cmd)
+            self._fim.wait(tempo + 15)
+            return self.linhas()
+
+    def fechar(self):
+        try:
+            self.parar()
+            self._env("quit")
+            self.p.wait(timeout=2)
+        except Exception:
+            self.p.kill()
+
+
+def chance_brancas(cp_brancas: Optional[int]) -> float:
+    """Fração (0–1) para a barra de avaliação, com a mesma curva de win% do Lichess."""
+    import math
+    if cp_brancas is None:
+        return 0.5
+    cp = max(-1000, min(1000, cp_brancas))
+    return 0.5 + 0.5 * (2 / (1 + math.exp(-0.00368208 * cp)) - 1)
+
+
+def texto_aval(o: Opcao, branco_joga: bool) -> str:
+    """Avaliação no padrão do Lichess (ponto de vista das brancas): +0.35, -1.20, #3, #-2."""
+    sinal = 1 if branco_joga else -1
+    if o.mate is not None:
+        return f"#{o.mate * sinal}"
+    if o.cp is None:
+        return "?"
+    return f"{o.cp * sinal / 100:+.2f}"
+
+
+def ler_partida(texto: str) -> (str, List[str]):
+    """Aceita FEN ou PGN (como o Lichess exporta). Devolve (FEN inicial, lances UCI)."""
+    texto = (texto or "").strip()
+    if not texto:
+        raise FonteErro("nada para carregar")
+    try:
+        return validar_fen(texto).fen(), []
+    except FonteErro:
+        pass
+    import io
+    import chess.pgn
+    jogo = chess.pgn.read_game(io.StringIO(texto))
+    if jogo is None or (not jogo.headers.get("FEN") and not list(jogo.mainline_moves())):
+        raise FonteErro("não reconheci FEN nem PGN")
+    inicio = jogo.board()
+    return inicio.fen(), [m.uci() for m in jogo.mainline_moves()]
 
 
 # ======================================================== coleta combinada
