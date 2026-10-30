@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -28,7 +32,33 @@ jobs:
             libffi-dev libssl-dev build-essential ccache
 
       - name: Buildozer (versões fixas que funcionam juntas)
-        run: pip install "buildozer==1.5.0" "cython==0.29.36" "setuptools<70" virtualenv
+        run: pip install "buildozer==1.5.0" "cython==0.29.36" "setuptools<70" virtualenv chess certifi
+
+      - name: Cache do Stockfish
+        id: cache-sf
+        uses: actions/cache@v4
+        with:
+          path: libs/arm64-v8a/libstockfish.so
+          key: stockfish-sf_19-arm64-api24
+
+      - name: Compilar Stockfish 19 para Android arm64
+        if: steps.cache-sf.outputs.cache-hit != 'true'
+        run: |
+          NDKV="27.2.12479018"
+          SDK=/usr/local/lib/android/sdk
+          echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager "ndk;$NDKV" > /dev/null
+          export PATH=$SDK/ndk/$NDKV/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          git clone --depth 1 --branch sf_19 https://github.com/official-stockfish/Stockfish sf
+          cd sf/src
+          make net
+          export LDFLAGS="-static -Wno-unused-command-line-argument"
+          make -j4 build ARCH=armv8 COMP=ndk CXX=aarch64-linux-android24-clang++
+          make strip ARCH=armv8 COMP=ndk
+          file stockfish
+          ls -lh stockfish
+          cd ../..
+          mkdir -p libs/arm64-v8a
+          cp sf/src/stockfish libs/arm64-v8a/libstockfish.so
 
       - name: Cache do Buildozer
         uses: actions/cache@v4
@@ -36,13 +66,27 @@ jobs:
           path: |
             ~/.buildozer
             .buildozer
-          key: buildozer-v2-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v3-${{ hashFiles('buildozer.spec') }}
 
       - name: Testar núcleo
         run: python hed_core.py
 
+      - name: Testar Lichess (nuvem, sem token — não bloqueia o build)
+        continue-on-error: true
+        run: |
+          python -c "
+          import hed_fontes as F, chess
+          b = chess.Board('r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3')
+          ops, prof = F.nuvem(b, 3)
+          print('profundidade', prof)
+          for o in ops: print(F.linha_texto(o, F.melhor_cp(ops)))
+          "
+
       - name: Gerar APK
         run: buildozer -v android debug 2>&1 | tee build.log
+
+      - name: Conferir Stockfish dentro do APK
+        run: unzip -l bin/*.apk | grep libstockfish.so
 
       - name: Mostrar erro (se falhar)
         if: failure()
