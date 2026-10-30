@@ -9,13 +9,13 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -23,12 +23,12 @@ jobs:
       - name: Dependências do sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip autoconf libtool pkg-config \
+          sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake \
-            libffi-dev libssl-dev automake
+            libffi-dev libssl-dev build-essential ccache
 
-      - name: Buildozer
-        run: pip install --upgrade buildozer "cython==0.29.36" setuptools
+      - name: Buildozer (versões fixas que funcionam juntas)
+        run: pip install "buildozer==1.5.0" "cython==0.29.36" "setuptools<70" virtualenv
 
       - name: Cache do Buildozer
         uses: actions/cache@v4
@@ -36,13 +36,28 @@ jobs:
           path: |
             ~/.buildozer
             .buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v2-${{ hashFiles('buildozer.spec') }}
 
       - name: Testar núcleo
         run: python hed_core.py
 
       - name: Gerar APK
-        run: yes | buildozer -v android debug
+        run: buildozer -v android debug 2>&1 | tee build.log
+
+      - name: Mostrar erro (se falhar)
+        if: failure()
+        run: |
+          echo "===== LINHAS COM ERRO ====="
+          grep -n -i -E "error|exception|failed|not found" build.log | tail -40 || true
+          echo "===== FINAL DO LOG ====="
+          tail -150 build.log || true
+
+      - name: Enviar log (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - uses: actions/upload-artifact@v4
         with:
