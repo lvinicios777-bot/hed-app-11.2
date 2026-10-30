@@ -4,9 +4,9 @@ package.name = hed
 package.domain = org.lucas
 source.dir = .
 source.include_exts = py,png,jpg,kv,json
-source.exclude_dirs = .github, bin, .buildozer
-version = 11.2.0
-requirements = python3,kivy==2.3.0
+source.exclude_dirs = .github, bin, .buildozer, sf, libs
+version = 11.2.1
+requirements = python3,kivy==2.3.0,chess,certifi
 orientation = portrait
 fullscreen = 0
 
@@ -14,7 +14,11 @@ android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a
 android.accept_sdk_license = True
-android.permissions =
+android.permissions = INTERNET
+
+# Stockfish compilado no workflow e empacotado como biblioteca nativa
+# (Android 10+ só executa binários da pasta de bibliotecas do app)
+android.add_libs_arm64_v8a = libs/arm64-v8a/*.so
 
 p4a.branch = v2024.01.21
 

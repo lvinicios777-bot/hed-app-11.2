@@ -69,6 +69,11 @@ class Candidato:
     w: Optional[float] = None        # WDL (%), opcional
     d: Optional[float] = None
     l: Optional[float] = None
+    # Evidência externa (banco de partidas do Lichess) — só informa, não decide
+    n_masters: Optional[int] = None
+    pts_masters: Optional[float] = None
+    n_lichess: Optional[int] = None
+    pts_lichess: Optional[float] = None
 
     # ---- derivados
     @property
@@ -141,6 +146,9 @@ def analisar(cands: List[Candidato], mi_cp: float = MI_CP, mi_pp: float = MI_PP)
             res["avisos"].append("WDL incompleto: usada a perda em peões para todos.")
         melhor = min(c.delta for c in ativos)
         rel = {c.lance: round(c.delta - melhor, 3) for c in ativos}
+    if min(c.delta for c in ativos) > mi_cp + 1e-9:
+        res["avisos"].append(f"O melhor lance do motor não está entre os candidatos "
+                             f"(menor perda informada: {min(c.delta for c in ativos):.2f} peão).")
     res.update(modo=modo, mi=mi, rel=rel, unidade="pp" if modo == "pp" else "peões")
 
     sobrev = []
@@ -265,6 +273,19 @@ def relatorio(cands: List[Candidato], mi_cp: float = MI_CP, mi_pp: float = MI_PP
                  f" → ATP {c.atp:.2f}")
     L.append("     (* derivados do núcleo estratégico)")
     L.append("")
+    ev = [c for c in r["ativos"] if c.n_masters or c.n_lichess]
+    if ev:
+        L.append("EVIDÊNCIA EXTERNA (pontos de quem joga; não altera a decisão)")
+        for c in ev:
+            partes = []
+            if c.n_masters:
+                partes.append(f"Masters {c.n_masters} jogos {c.pts_masters:.0%}"
+                              + (" (amostra pequena)" if c.n_masters < 20 else ""))
+            if c.n_lichess:
+                partes.append(f"Lichess {c.n_lichess} jogos {c.pts_lichess:.0%}"
+                              + (" (amostra pequena)" if c.n_lichess < 50 else ""))
+            L.append(f"  {c.lance}: " + " | ".join(partes))
+        L.append("")
     L.append(f"MI ({r['mi']} {u}): " + (", ".join(r["equivalentes"]) or "—"))
     L.append("Dominados (Pareto): " + (", ".join(r["dominados"]) or "nenhum"))
     if r["duelos"]:

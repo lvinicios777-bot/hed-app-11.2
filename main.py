@@ -1,12 +1,16 @@
 """
 HED 11.2 — app Android (Kivy).
-Telas: lista de candidatos · edição · relatório · registrar posição · registro (PR/CC/AC/RP).
+Telas: lista de candidatos · edição · relatório · registrar posição · registro (PR/CC/AC/RP)
+       · posição (FEN → Stockfish + Lichess) · configurações.
 Dados salvos em JSON no armazenamento do app.
 """
 import json
 import os
+import threading
 
 from kivy.app import App
+from kivy.clock import Clock
+from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
@@ -22,6 +26,9 @@ from kivy.uix.textinput import TextInput
 
 from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_CP, MI_PP, VERSAO,
                       RESULTADOS, analisar, relatorio, novo_registro, analise_registro)
+import hed_fontes as F
+
+FEN_INICIAL = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 Window.clearcolor = (0.11, 0.12, 0.14, 1)
 ALTURA = dp(48)
@@ -114,9 +121,13 @@ class TelaLista(Screen):
         a1.add_widget(botao("Analisar", self.analisar, VERDE))
         raiz.add_widget(a1)
         a2 = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8))
+        a2.add_widget(botao("Posição (FEN)", lambda: app.ir("posicao"), (0.7, 0.45, 0.15, 1)))
         a2.add_widget(botao("Registro", lambda: app.ir("registro"), (0.45, 0.35, 0.6, 1)))
-        a2.add_widget(botao("Nova posição", self.limpar, CINZA))
         raiz.add_widget(a2)
+        a3 = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8))
+        a3.add_widget(botao("Configurações", lambda: app.ir("config"), CINZA))
+        a3.add_widget(botao("Limpar candidatos", self.limpar, CINZA))
+        raiz.add_widget(a3)
         self.add_widget(raiz)
 
     def remover(self, i):
@@ -274,8 +285,11 @@ class TelaRegistrar(Screen):
     def registrar(self):
         app = App.get_running_app()
         app.ultima_estrutura = self.estrutura.text.strip()
-        app.registro.append(novo_registro(app.ultimo, self.estrutura.text, self.jogado.text,
-                                          RESULTADOS[self.resultado.text]))
+        reg = novo_registro(app.ultimo, self.estrutura.text, self.jogado.text,
+                            RESULTADOS[self.resultado.text])
+        if app.fen:
+            reg["fen"] = app.fen
+        app.registro.append(reg)
         app.salvar()
         app.ir("registro")
 
@@ -329,6 +343,205 @@ class TelaRegistro(Screen):
         self.montar()
 
 
+# ---------------------------------------------------------------- Posição (FEN → motor + banco)
+class TelaPosicao(Screen):
+    def on_enter(self, *_):
+        if not getattr(self, "montada", False):
+            self.montar()
+
+    def montar(self):
+        app = App.get_running_app()
+        self.montada = True
+        self.clear_widgets()
+        self.marcas, self.resultado = {}, None
+        raiz = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
+        raiz.add_widget(titulo("Posição"))
+        raiz.add_widget(rotulo("Cole o FEN (no Lichess: menu > Compartilhar > FEN):", font_size="13sp"))
+        self.fen = TextInput(text=app.fen or "", multiline=False, size_hint_y=None, height=ALTURA,
+                             font_size="13sp")
+        raiz.add_widget(self.fen)
+        l1 = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+        l1.add_widget(botao("Colar", self.colar, CINZA))
+        l1.add_widget(botao("Inicial", lambda: setattr(self.fen, "text", FEN_INICIAL), CINZA))
+        self.b_analisar = botao("Analisar", self.analisar, VERDE)
+        l1.add_widget(self.b_analisar)
+        raiz.add_widget(l1)
+
+        self.status = Label(text="", markup=True, size_hint_y=None, halign="left", valign="top",
+                            font_size="13sp")
+        self.status.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+                         texture_size=lambda w, s: setattr(w, "height", s[1] + dp(6)))
+        raiz.add_widget(self.status)
+
+        self.lista = GridLayout(cols=1, spacing=dp(4))
+        raiz.add_widget(rolavel(self.lista))
+
+        l2 = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+        l2.add_widget(botao("Voltar", lambda: app.ir("lista"), CINZA))
+        self.b_importar = botao("Importar marcados", self.importar, AZUL)
+        l2.add_widget(self.b_importar)
+        raiz.add_widget(l2)
+        self.add_widget(raiz)
+
+    def colar(self):
+        try:
+            self.fen.text = " ".join((Clipboard.paste() or "").split())
+        except Exception:
+            pass
+
+    def _status(self, txt):
+        self.status.text = seguro(txt)
+
+    def analisar(self):
+        app = App.get_running_app()
+        fen = " ".join(self.fen.text.split())
+        try:
+            F.validar_fen(fen)
+        except F.FonteErro as e:
+            self._status(f"[color=ff7777]{e}[/color]")
+            return
+        self.b_analisar.disabled = True
+        self.lista.clear_widgets()
+        self._status("Iniciando…")
+
+        def progresso(s):
+            Clock.schedule_once(lambda dt: self._status(s))
+
+        def trabalho():
+            try:
+                motor = app.obter_motor() if app.cfg["motor"] == "Stockfish local" else None
+                r = F.coletar(fen, app.cfg, motor, progresso)
+                Clock.schedule_once(lambda dt: self.mostrar(r))
+            except Exception as e:
+                msg = str(e)
+                Clock.schedule_once(lambda dt: self._erro(msg))
+
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _erro(self, msg):
+        self.b_analisar.disabled = False
+        self._status(f"[color=ff7777]Erro: {msg}[/color]")
+
+    def mostrar(self, r):
+        app = App.get_running_app()
+        self.b_analisar.disabled = False
+        self.resultado = r
+        app.fen = r["fen"]
+        app.salvar()
+        cab = [f"Joga: [b]{r['lado']}[/b]"]
+        if r["abertura"]:
+            cab.append(f"Abertura: {r['abertura']}")
+        if r["fonte"]:
+            cab.append(f"Motor: {r['fonte']} (prof. {r['prof']})")
+        if r.get("total_masters") is not None:
+            cab.append(f"Masters: {r['total_masters']} jogos | Lichess: {r.get('total_lichess', 0)} jogos")
+        for a in r["avisos"]:
+            cab.append(f"[color=ffcc66]! {a}[/color]")
+        cab.append("[size=12sp]E = pontuação esperada | M/L = jogos e pontos nos bancos Masters/Lichess[/size]")
+        self._status("\n".join(cab))
+
+        self.lista.clear_widgets()
+        self.marcas = {}
+        ref = F.melhor_cp(r["opcoes"])
+        for o in r["opcoes"]:
+            linha = BoxLayout(size_hint_y=None, height=dp(58), spacing=dp(4))
+            cb = CheckBox(size_hint_x=None, width=dp(40),
+                          active=bool(o.multipv and o.multipv <= 3 and o.cp is not None),
+                          disabled=o.cp is None)
+            self.marcas[o.uci] = cb
+            linha.add_widget(cb)
+            txt = F.linha_texto(o, ref) + ("\n  " + " ".join(o.pv) if o.pv else "")
+            lb = Label(text=seguro(txt), font_name="RobotoMono-Regular", font_size="12sp",
+                       halign="left", valign="middle")
+            lb.bind(size=lambda w, s: setattr(w, "text_size", s))
+            linha.add_widget(lb)
+            self.lista.add_widget(linha)
+
+    def importar(self):
+        app = App.get_running_app()
+        if not self.resultado:
+            self._status("Analise uma posição primeiro.")
+            return
+        ops = [o for o in self.resultado["opcoes"] if self.marcas.get(o.uci) and self.marcas[o.uci].active]
+        if not ops:
+            self._status("Marque pelo menos um lance avaliado.")
+            return
+        ref = F.melhor_cp(self.resultado["opcoes"])
+        app.cands = [F.para_candidato(o, ref) for o in ops]
+        app.salvar()
+        app.ir("lista")
+
+
+# ---------------------------------------------------------------- Configurações
+class TelaConfig(Screen):
+    def on_enter(self, *_):
+        self.montar()
+
+    def montar(self):
+        app = App.get_running_app()
+        c = app.cfg
+        self.clear_widgets()
+        corpo = GridLayout(cols=1, spacing=dp(4), padding=dp(10))
+        corpo.add_widget(titulo("Configurações"))
+
+        corpo.add_widget(rotulo("Token do Lichess (para o banco de partidas):"))
+        self.token = campo(c["token"])
+        self.token.password = True
+        corpo.add_widget(self.token)
+        ajuda = Label(text="Crie em lichess.org/account/oauth/token\nsem marcar nenhuma permissão. "
+                           "Fica salvo só neste celular.",
+                      font_size="12sp", size_hint_y=None, height=dp(40), halign="left", valign="middle")
+        ajuda.bind(size=lambda w, s: setattr(w, "text_size", s))
+        corpo.add_widget(ajuda)
+
+        corpo.add_widget(rotulo("Motor:"))
+        self.motor = Spinner(text=c["motor"], values=["Stockfish local", "Lichess nuvem"],
+                             size_hint_y=None, height=ALTURA)
+        corpo.add_widget(self.motor)
+
+        self.sl = {}
+        for chave, rot, mn, mx, passo in (("tempo", "Tempo por busca (s)", 1, 20, 1),
+                                          ("multipv", "Linhas do motor (MultiPV)", 1, 8, 1),
+                                          ("extras", "Lances do banco a avaliar", 0, 5, 1)):
+            linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+            lb = Label(text=f"{rot}: {c[chave]:.0f}", size_hint_x=0.55, halign="left", valign="middle")
+            lb.bind(size=lambda w, s: setattr(w, "text_size", s))
+            s = Slider(min=mn, max=mx, step=passo, value=float(c[chave]), size_hint_x=0.45)
+            s.bind(value=lambda _s, v, lb=lb, rot=rot: setattr(lb, "text", f"{rot}: {v:.0f}"))
+            linha.add_widget(lb)
+            linha.add_widget(s)
+            corpo.add_widget(linha)
+            self.sl[chave] = s
+
+        corpo.add_widget(rotulo("Banco Lichess — faixas de rating:"))
+        self.ratings = campo(c["ratings"])
+        corpo.add_widget(self.ratings)
+        corpo.add_widget(rotulo("Banco Lichess — ritmos:"))
+        self.speeds = campo(c["speeds"])
+        corpo.add_widget(self.speeds)
+
+        sf = F.caminho_stockfish()
+        corpo.add_widget(rotulo(f"Stockfish no aparelho: {'encontrado' if sf else 'não encontrado'}",
+                                font_size="12sp"))
+
+        raiz = BoxLayout(orientation="vertical")
+        raiz.add_widget(rolavel(corpo))
+        acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8), padding=(dp(10), 0))
+        acoes.add_widget(botao("Cancelar", lambda: app.ir("lista"), CINZA))
+        acoes.add_widget(botao("Salvar", self.salvar, VERDE))
+        raiz.add_widget(acoes)
+        self.add_widget(raiz)
+
+    def salvar(self):
+        app = App.get_running_app()
+        app.cfg.update(token=self.token.text.strip(), motor=self.motor.text,
+                       ratings=self.ratings.text.strip() or F.CFG_PADRAO["ratings"],
+                       speeds=self.speeds.text.strip() or F.CFG_PADRAO["speeds"],
+                       **{k: int(s.value) for k, s in self.sl.items()})
+        app.salvar()
+        app.ir("lista")
+
+
 # ---------------------------------------------------------------- App
 class HEDApp(App):
     title = f"HED {VERSAO}"
@@ -338,13 +551,32 @@ class HEDApp(App):
         self.cands, self.registro = [], []
         self.mi_cp, self.mi_pp, self.indice = MI_CP, MI_PP, None
         self.ultimo, self.ultima_estrutura = None, ""
+        self.cfg, self.fen = dict(F.CFG_PADRAO), ""
+        self.motor, self._trava_motor = None, threading.Lock()
         self.carregar()
         self.sm = ScreenManager(transition=NoTransition())
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
-                          ("registrar", TelaRegistrar), ("registro", TelaRegistro)):
+                          ("registrar", TelaRegistrar), ("registro", TelaRegistro),
+                          ("posicao", TelaPosicao), ("config", TelaConfig)):
             self.sm.add_widget(cls(name=nome))
         self.sm.current = "lista"
         return self.sm
+
+    # ---- motor (iniciado na primeira análise, reaproveitado depois)
+    def obter_motor(self):
+        with self._trava_motor:
+            if self.motor is None:
+                caminho = F.caminho_stockfish()
+                if caminho:
+                    try:
+                        self.motor = F.Motor(caminho)
+                    except Exception:
+                        self.motor = None
+            return self.motor
+
+    def on_stop(self):
+        if self.motor:
+            self.motor.fechar()
 
     # ---- persistência
     def carregar(self):
@@ -356,6 +588,8 @@ class HEDApp(App):
             self.cands = [Candidato.de_dict(d) for d in dados.get("cands", [])]
             self.registro = dados.get("registro", [])
             self.ultima_estrutura = dados.get("ultima_estrutura", "")
+            self.cfg.update(dados.get("cfg", {}))
+            self.fen = dados.get("fen", "")
         except (OSError, ValueError, TypeError):
             pass
 
@@ -364,7 +598,8 @@ class HEDApp(App):
             with open(self.arquivo, "w", encoding="utf-8") as f:
                 json.dump({"mi_cp": self.mi_cp, "mi_pp": self.mi_pp,
                            "cands": [c.para_dict() for c in self.cands],
-                           "registro": self.registro, "ultima_estrutura": self.ultima_estrutura},
+                           "registro": self.registro, "ultima_estrutura": self.ultima_estrutura,
+                           "cfg": self.cfg, "fen": self.fen},
                           f, ensure_ascii=False)
         except OSError:
             pass

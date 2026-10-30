@@ -7,17 +7,30 @@ Mesma filosofia e pipeline do 11.1.1; o 11.2 muda só a camada de medição.
 
 | Arquivo | Função |
 |---|---|
-| `hed_core.py` | Núcleo: filtro, faixas, MI, Pareto, TOP, MA, ATP, saídas, IFE, registro e PR/CC/AC/RP |
-| `main.py` | Interface Android (Kivy) |
-| `buildozer.spec` | Configuração do APK |
-| `.github/workflows/android.yml` | Gera o APK no GitHub Actions |
+| 'hed_core.py' | Núcleo: filtro, faixas, MI, Pareto, TOP, MA, ATP, saídas, IFE, registro e PR/CC/AC/RP |
+| 'main.py' | Interface Android (Kivy) |
+| 'buildozer.spec' | Configuração do APK |
+| '.github/workflows/android.yml' | Gera o APK no GitHub Actions |
 
 ## Gerar o APK pelo GitHub
 
-1. Envie todos os arquivos para um repositório (incluindo a pasta `.github`).
-2. Aba **Actions** → workflow **Build APK** roda a cada push em `main`.
-3. Ao terminar (~20–30 min na 1ª vez): execução → **Artifacts** → `hed-apk`.
-4. Extraia o `.apk` no celular e instale.
+1. Envie todos os arquivos para um repositório (incluindo a pasta '.github').
+2. Aba **Actions** → workflow **Build APK** roda a cada push em 'main'.
+3. Ao terminar (~20–30 min na 1ª vez): execução → **Artifacts** → 'hed-apk'.
+4. Extraia o '.apk' no celular e instale.
+
+## Motor e banco de dados (tela "Posição (FEN)")
+
+1. Cole o FEN da posição (no Lichess: menu > Compartilhar > FEN) e toque em **Analisar**.
+2. O app consulta:
+   - **Stockfish 19** rodando no próprio celular (avaliação + WDL, MultiPV) — compilado no build e embutido no APK;
+   - **Lichess nuvem** como reserva (avaliação em cache, sem token);
+   - **Banco Lichess Masters e Lichess** (jogos e pontuação por lance) — exige token pessoal.
+3. Lances que aparecem no banco mas não no MultiPV também são avaliados pelo Stockfish.
+4. Marque os lances e toque em **Importar marcados**: perda (vs melhor lance) e WDL são preenchidos sozinhos; você só dá as notas estratégicas.
+
+Token: crie em lichess.org/account/oauth/token **sem marcar nenhuma permissão** e cole em Configurações.
+A evidência dos bancos aparece no relatório, mas não altera a decisão (regra do HED: estatística não substitui avaliação objetiva).
 
 ## O que mudou do 11.1.1 para o 11.2
 
@@ -57,4 +70,4 @@ Após analisar: **Registrar** → estrutura, lance jogado, resultado (pode preen
 - **AC**: alerta quando você contradiz o próprio padrão (≥3 posições anteriores na estrutura)
 - **RP**: só sugere rever pesos com ≥5 posições com resultado na estrutura e desvio rendendo ≥0,15 ponto a mais
 
-Pesos e limites ficam no topo de `hed_core.py`.
+Pesos e limites ficam no topo de 'hed_core.py'.
