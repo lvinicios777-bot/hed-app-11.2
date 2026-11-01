@@ -5,9 +5,9 @@ package.domain = org.lucas
 source.dir = .
 source.include_exts = py,png,jpg,kv,json
 source.exclude_dirs = .github, bin, .buildozer, sf, libs
-version = 11.1.2.8
+version = 11.1.2.9
 # versionCode sempre crescente (11.2.1 = 924110201) para instalar por cima sem perder os dados
-android.numeric_version = 924110280
+android.numeric_version = 924110290
 requirements = python3,kivy==2.3.0,chess,certifi
 orientation = portrait
 fullscreen = 0

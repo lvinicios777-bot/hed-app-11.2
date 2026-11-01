@@ -1,0 +1,19 @@
+name: Manter a chave de assinatura
+
+# O GitHub apaga caches sem acesso há 7 dias; este job acessa a chave toda semana.
+on:
+  schedule:
+    - cron: "17 9 * * 1,4"
+  workflow_dispatch:
+
+jobs:
+  tocar:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/cache/restore@v4
+        id: chave
+        with:
+          path: ~/.android/debug.keystore
+          key: hed-chave-assinatura-v1
+      - run: |
+          if [ "${{ steps.chave.outputs.cache-hit }}" = "true" ]; then echo "chave presente"; else echo "::warning::chave de assinatura não encontrada no cache"; fi

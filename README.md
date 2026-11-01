@@ -70,6 +70,11 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.9 — assinatura fixa
+
+- Cada build gerava uma chave de assinatura nova, e o Android recusava atualizar ("conflito com um pacote já existente"). Agora a chave é criada uma vez e reaproveitada (cache do GitHub, mantido vivo por um job semanal), e o build é interrompido se a chave mudar (`assinatura.sha256`).
+- Na primeira instalação da 11.1.2.9 é preciso desinstalar a versão anterior uma única vez; depois disso as atualizações instalam por cima.
+
 ## Novidades da 11.1.2.8 — Resumo e Plano de jogo
 
 - **Resumo** (abre ao tocar em Analisar): "JOGUE: lance", confiança em palavras (alta / boa / média / baixa), o porquê em uma frase e um cartão por lance (RECOMENDADO, BOA ALTERNATIVA, POSSÍVEL, INFERIOR, EVITAR) com o motivo principal. Os números técnicos ficam em **Detalhes**.
