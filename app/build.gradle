@@ -10,8 +10,9 @@ android {
         applicationId 'br.escola.gradehoraria'
         minSdk 24
         targetSdk 34
-        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
-        versionName "1.0." + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+        def run = System.getenv('GITHUB_RUN_NUMBER') ?: '1'
+        versionCode = run.toInteger()
+        versionName = "1.0.${run}"
     }
 
     signingConfigs {
