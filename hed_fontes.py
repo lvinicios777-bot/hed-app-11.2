@@ -59,6 +59,10 @@ class Opcao:
     mate: Optional[int] = None
     wdl: Optional[tuple] = None           # (W, D, L) em ‰, POV de quem joga
     wdl_sf: Optional[tuple] = None        # WDL do Stockfish, guardado quando o do Lc0 o substitui
+    fonte_wdl: Optional[str] = None       # "Lc0" ou "Stockfish"
+    cp_lc0: Optional[int] = None          # avaliação do Lc0 (só informa)
+    rank_sf: Optional[int] = None         # posição no ranking do Stockfish (pela avaliação)
+    rank_lc0: Optional[int] = None        # posição no ranking do Lc0 (pela pontuação esperada)
     pv: List[str] = field(default_factory=list)
     multipv: Optional[int] = None         # posição no ranking do motor (None = extra)
     masters: Optional[Estat] = None
@@ -651,23 +655,28 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
         o.lichess = est["lichess"].get(o.uci)
     r["opcoes"] = ops
 
-    # 2b. WDL do Lc0 (mais "humano" e menos saturado que o do Stockfish) para os mesmos lances
+    # 2b. Divisão de trabalho: Stockfish escolhe os lances e julga a tática (avaliação, perda);
+    #     o Lc0 dá as chances (WDL), que entram na pontuação esperada E.
+    for o in ops:
+        o.fonte_wdl = "Stockfish" if o.wdl else None
     r["fonte_wdl"] = "Stockfish" if any(o.wdl for o in ops) else None
     if lc0 is not None and ops:
         try:
-            progresso("Lc0 calculando o WDL dos lances…")
+            progresso("Lc0 calculando as chances (WDL) dos lances…")
             ucis = [o.uci for o in ops][:8]
             lops, _ = lc0.buscar(board, len(ucis), float(cfg["tempo"]), ucis)
-            wdl = {o.uci: o.wdl for o in lops if o.wdl}
+            por = {o.uci: o for o in lops if o.wdl}
             for o in ops:
-                if o.uci in wdl:
-                    o.wdl_sf, o.wdl = o.wdl, wdl[o.uci]
-            if wdl:
-                r["fonte_wdl"] = f"Lc0 ({len(wdl)}/{len(ops)} lances)"
+                x = por.get(o.uci)
+                if x:
+                    o.wdl_sf, o.wdl, o.fonte_wdl, o.cp_lc0 = o.wdl, x.wdl, "Lc0", x.cp
+            if por:
+                r["fonte_wdl"] = f"Lc0 ({len(por)}/{len(ops)} lances)"
             else:
                 r["avisos"].append("Lc0 não devolveu WDL: usado o do Stockfish.")
         except Exception as e:
             r["avisos"].append(f"Lc0 indisponível ({e}): usado o WDL do Stockfish.")
+    comparar_motores(ops, r)
 
     # 3. TF × Conversão automática (nunca derruba a análise)
     r["tf"] = None
@@ -680,6 +689,36 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
     except Exception as e:
         r["avisos"].append(f"TF automática indisponível: {e}")
     return r
+
+
+def comparar_motores(ops: List[Opcao], r: Dict) -> None:
+    """Ranking de cada motor e se concordam no melhor lance.
+
+    Stockfish: ordena pela avaliação (cp). Lc0: ordena pela pontuação esperada do WDL dele.
+    """
+    com_cp = sorted((o for o in ops if o.cp is not None), key=lambda o: -o.cp)
+    for i, o in enumerate(com_cp, 1):
+        o.rank_sf = i
+    lc = sorted((o for o in ops if o.fonte_wdl == "Lc0"), key=lambda o: -o.expectativa)
+    for i, o in enumerate(lc, 1):
+        o.rank_lc0 = i
+    r["sf_melhor"] = com_cp[0].san if com_cp else None
+    r["lc0_melhor"] = lc[0].san if lc else None
+    if r["sf_melhor"] and r["lc0_melhor"]:
+        if r["sf_melhor"] == r["lc0_melhor"]:
+            r["motores"] = f"Stockfish e Lc0 concordam: {r['sf_melhor']}"
+        else:
+            r["motores"] = f"Stockfish prefere {r['sf_melhor']} · Lc0 prefere {r['lc0_melhor']}"
+    else:
+        r["motores"] = None
+
+
+def texto_wdl(wdl: Optional[tuple]) -> str:
+    """(W, D, L) em ‰ → 'vence 32% · empata 55% · perde 13%'."""
+    if not wdl:
+        return "sem WDL"
+    w, d, l = (round(x / 10) for x in wdl)
+    return f"vence {w}% · empata {d}% · perde {l}%"
 
 
 def melhor_cp(opcoes: List[Opcao]) -> Optional[int]:
@@ -700,6 +739,8 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None, l
     if o.wdl:
         w, d, l = (x / 10 for x in o.wdl)
     c = Candidato(lance=o.san, delta=delta, w=w, d=d, l=l, aval_cp=o.cp)
+    c.motores = {"sf_cp": o.cp, "sf_mate": o.mate, "sf_rank": o.rank_sf, "wdl": list(o.wdl) if o.wdl else None,
+                 "wdl_fonte": o.fonte_wdl, "lc0_rank": o.rank_lc0, "lc0_cp": o.cp_lc0}
     if board is not None:
         try:
             from hed_auto import estimar_notas, conversao, filtro_auto
@@ -763,15 +804,24 @@ def _juntar_livro(analise: Dict, board: chess.Board, pv: List[str], livro: Dict)
 
 
 def linha_texto(o: Opcao, ref_cp: Optional[int]) -> str:
+    """Linha 1: Stockfish (avaliação, ranking, perda). Linha 2: chances (WDL) e de qual motor."""
     if o.cp is None:
-        av = "  sem aval."
+        av = "sem aval."
     elif o.mate is not None:
-        av = f"  M{o.mate:+d}"
+        av = f"M{o.mate:+d}"
     else:
-        av = f"{o.cp / 100:+6.2f}"
+        av = f"{o.cp / 100:+.2f}"
     perda = f" perda {max(0, ref_cp - o.cp) / 100:.2f}" if (o.cp is not None and ref_cp is not None) else ""
-    e = f" E{o.expectativa:4.0f}%" if o.expectativa is not None else ""
+    rk = f" ({o.rank_sf}º)" if o.rank_sf else ""
     m = f" | M {o.masters.n} {o.masters.pts:.0%}" if o.masters else ""
     li = f" | L {o.lichess.n} {o.lichess.pts:.0%}" if o.lichess else ""
     marca = "" if o.multipv else " (banco)"
-    return f"{o.san}{marca}: {av}{perda}{e}{m}{li}"
+    l1 = f"{o.san}{marca}  SF {av}{rk}{perda}{m}{li}"
+    if o.wdl:
+        quem = o.fonte_wdl or "WDL"
+        rk2 = f" ({o.rank_lc0}º)" if o.rank_lc0 else ""
+        w, d, l = (round(x / 10) for x in o.wdl)
+        l2 = f"  {quem}: V {w}% · Emp {d}% · D {l}% → E {o.expectativa:.0f}%{rk2}"
+    else:
+        l2 = "  sem WDL"
+    return l1 + "\n" + l2

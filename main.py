@@ -557,21 +557,25 @@ class TelaPosicao(Screen):
         if r["fonte"]:
             cab.append(f"Motor: {r['fonte']} (prof. {r['prof']})")
         if r.get("fonte_wdl"):
-            cab.append(f"WDL: {r['fonte_wdl']}")
+            cab.append(f"Chances (WDL): {r['fonte_wdl']} | tática e perda: Stockfish")
+        if r.get("motores"):
+            cor = "77dd77" if "concordam" in r["motores"] else "ffcc66"
+            cab.append(f"[color={cor}]{r['motores']}[/color]")
         if r.get("total_masters") is not None:
             cab.append(f"Masters: {r['total_masters']} jogos | Lichess: {r.get('total_lichess', 0)} jogos")
         for a in r["avisos"]:
             cab.append(f"[color=ffcc66]! {a}[/color]")
         if r.get("tf"):
             cab.append(f"[color=99ccff]TF x Conversão: {r['tf']['texto']}[/color]")
-        cab.append("[size=12sp]E = pontuação esperada | M/L = jogos e pontos nos bancos Masters/Lichess[/size]")
+        cab.append("[size=12sp]SF = Stockfish (avaliação para quem joga, 1º = mais forte) | V/Emp/D = vence/empata/perde | "
+                   "E = pontuação esperada | M/L = bancos Masters/Lichess[/size]")
         self._status("\n".join(cab))
 
         self.lista.clear_widgets()
         self.marcas = {}
         ref = F.melhor_cp(r["opcoes"])
         for o in r["opcoes"]:
-            linha = BoxLayout(size_hint_y=None, height=dp(58), spacing=dp(4))
+            linha = BoxLayout(size_hint_y=None, height=dp(76), spacing=dp(4))
             cb = CheckBox(size_hint_x=None, width=dp(40),
                           active=bool(o.multipv and o.multipv <= 3 and o.cp is not None),
                           disabled=o.cp is None)
@@ -638,6 +642,9 @@ class TelaResumo(Screen):
             caixa = Button(text=f"Confiança {conf}", background_normal="", background_color=cor,
                            size_hint_y=None, height=dp(36), font_size="15sp")
             corpo.add_widget(caixa)
+            mot = self._motores()
+            if mot:
+                corpo.add_widget(texto_quebrado(mot, "14sp"))
             corpo.add_widget(texto_quebrado(seguro(self._porque(r))))
             corpo.add_widget(Label(text="[b]Os lances analisados[/b]", markup=True, size_hint_y=None,
                                    height=dp(30)))
@@ -651,6 +658,19 @@ class TelaResumo(Screen):
             acoes.add_widget(botao("Registrar", app.abrir_registrar, VERDE))
         raiz.add_widget(acoes)
         self.add_widget(raiz)
+
+    def _motores(self):
+        """Uma linha: o que Stockfish e Lc0 acham do melhor lance entre os analisados."""
+        app = App.get_running_app()
+        sf = [c for c in app.cands if (c.motores or {}).get("sf_cp") is not None]
+        lc = [c for c in app.cands if (c.motores or {}).get("wdl_fonte") == "Lc0" and c.w is not None]
+        if not sf or not lc:
+            return ""
+        a = max(sf, key=lambda c: c.motores["sf_cp"]).lance
+        b = max(lc, key=lambda c: c.w + c.d / 2).lance
+        if a == b:
+            return f"[color=77dd77]Stockfish e Lc0 concordam: {a}[/color]"
+        return f"[color=ffcc66]Stockfish prefere {a} · Lc0 prefere {b}[/color]"
 
     def _porque(self, r):
         app = App.get_running_app()
@@ -700,16 +720,40 @@ class TelaResumo(Screen):
             out.append((c, selo, motivo))
         return out
 
+    @staticmethod
+    def _linha_motores(c):
+        """Stockfish +0.35 (1º) | Lc0: vence 32% · empata 55% · perde 13%"""
+        m = c.motores or {}
+        if m.get("sf_mate") is not None:
+            av = f"mate em {abs(m['sf_mate'])}" + ("" if m["sf_mate"] > 0 else " contra")
+        elif m.get("sf_cp") is not None:
+            av = f"{m['sf_cp'] / 100:+.2f}"
+        elif c.aval_cp is not None:
+            av = f"{c.aval_cp / 100:+.2f}"
+        else:
+            av = "—"
+        rk = f" ({m['sf_rank']}º)" if m.get("sf_rank") else ""
+        if c.w is not None:
+            quem = m.get("wdl_fonte") or "WDL"
+            rk2 = f" ({m['lc0_rank']}º)" if m.get("lc0_rank") and quem == "Lc0" else ""
+            ch = f"[b]{quem}[/b]{rk2}: vence {c.w:.0f}% · empata {c.d:.0f}% · perde {c.l:.0f}%"
+        else:
+            ch = "[b]Chances:[/b] sem WDL"
+        if av not in ("—",) and not av.startswith("mate"):
+            av += " para você"
+        return f"[b]Stockfish[/b] {av}{rk}\n{ch}"
+
     def _cartao(self, c, selo, motivo):
         app = App.get_running_app()
         nome, cor = SELO[selo]
-        caixa = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(112), spacing=dp(2))
+        caixa = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(150), spacing=dp(2))
         topo = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(6))
         topo.add_widget(Label(text=f"[b]{c.lance}[/b]", markup=True, font_size="20sp", size_hint_x=0.3))
         topo.add_widget(Button(text=nome, background_normal="", background_color=cor, font_size="13sp",
                                size_hint_x=0.7))
         caixa.add_widget(topo)
-        perda = "igual ao melhor do motor" if c.delta < 0.005 else f"{c.delta:.2f} peão abaixo do melhor do motor"
+        perda = "igual ao melhor do Stockfish" if c.delta < 0.005 else f"{c.delta:.2f} peão abaixo do melhor do Stockfish"
+        caixa.add_widget(texto_quebrado(seguro(self._linha_motores(c)), "13sp"))
         caixa.add_widget(texto_quebrado(seguro(f"{perda} · {motivo}"), "13sp"))
         if c.analise:
             caixa.add_widget(botao(f"Ver o plano com {c.lance}", lambda c=c: app.mostrar_plano(c), AZUL))

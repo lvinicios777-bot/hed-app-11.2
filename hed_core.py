@@ -119,6 +119,7 @@ class Candidato:
     filtro: Dict[str, bool] = field(default_factory=dict)   # 6 itens do filtro obrigatório
     conversao: Optional[float] = None    # Eficiência de Conversão 0–10 (só pesa quando ganhando)
     analise: Dict = field(default_factory=dict)   # continuação: linha, estrutura, peças, espaço, planos
+    motores: Dict = field(default_factory=dict)   # o que cada motor disse: Stockfish (cp, ranking) e Lc0 (WDL)
 
     def falhas_filtro(self) -> List[str]:
         return [k for k in FILTRO_ITENS if self.filtro.get(k) is False]
