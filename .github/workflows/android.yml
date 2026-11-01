@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: build-apk
   cancel-in-progress: true
@@ -107,3 +110,16 @@ jobs:
         with:
           name: hed-apk
           path: bin/*.apk
+
+      - name: Publicar APK numa Release (download direto, sem login)
+        run: |
+          V=$(grep -E '^version *=' buildozer.spec | head -1 | cut -d= -f2 | tr -d ' ')
+          echo "VERSAO=$V" >> $GITHUB_ENV
+          cp bin/*.apk hed.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSAO }}
+          name: HED ${{ env.VERSAO }}
+          make_latest: true
+          files: hed.apk
