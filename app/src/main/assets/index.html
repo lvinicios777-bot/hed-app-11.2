@@ -326,7 +326,7 @@ const CAT = {
 const COL = {h_pm:0, h_pt:0, h_i7m:1, h_i7t:1, h_i9:2, h_noite:3};
 const etapaInfo = id => ETAPAS.find(e => e.id === id);
 function anosDaEtapa(eid){ return etapaInfo(eid).anos.map(([k, n, c]) => ({id:'a_' + k, nome:n, curto:c, etapa:eid})); }
-function discsDaEtapa(eid){ return CAT[eid].map(([sg, nome, ...v]) => ({id:`d_${eid}_${sg}`, etapa:eid, nome, sigla:sg, carga:Object.fromEntries(Object.entries(COL).map(([h, i]) => [h, v[i]])), c:{}, gem: REGRA[sg]?.gem || 'padrao', maxDia: REGRA[sg]?.maxDia ?? null})); }
+function discsDaEtapa(eid){ return CAT[eid].map(([sg, nome, ...v]) => ({id:`d_${eid}_${sg}`, etapa:eid, nome, sigla:sg, carga:Object.fromEntries(Object.entries(COL).map(([h, i]) => [h, v[i]])), c:{}, gem: REGRA[sg]?.gem || (['LP','MAT'].includes(sg) ? 'sim' : Math.max(...v) > 5 ? 'livre' : 'nao'), maxDia: REGRA[sg]?.maxDia ?? null})); }
 /* regente e oficinas ocupam boa parte do dia: sem dupla obrigatória e com mais aulas por dia */
 const REGRA = {REG:{gem:'livre', maxDia:5}, OF:{gem:'livre', maxDia:4}, BRI:{gem:'livre', maxDia:4}};
 function fromPreset(id){ const p = PRESETS.find(x => x.id === id); return {id: p.id, nome: p.nome, inicio: p.inicio, aulas: p.aulas, intervalos: p.intervalos.map(iv => ({...iv})), limite: LIM_DEF, horas: 25, pl: 7, ivEt: {}}; }
@@ -351,7 +351,7 @@ function sample(){
 function newHorario(){ return {id: nid('h'), nome: 'Período personalizado', inicio: '07:00', aulas: 5, intervalos: [{apos: 3, min: 20, nome: 'Recreio'}], limite: LIM_DEF, pl: 0}; }
 function normalize(o){
   o = o && typeof o === 'object' ? o : {};
-  o.escola = Object.assign({nome:'Minha escola', dias:5, dur:50, maxDia:2, gem:true, tempo:6}, o.escola || {});
+  o.escola = Object.assign({nome:'Minha escola', dias:5, dur:50, maxDia:2, gem:false, tempo:6, distModo:'equilibrar'}, o.escola || {});
   o.escola.dur = Math.max(20, Math.min(120, parseInt(o.escola.dur, 10) || 50));
   o.horarios = Array.isArray(o.horarios) ? o.horarios.filter(h => h && h.id) : [];
   if (o.periodosOk === undefined) o.periodosOk = o.horarios.length > 0;
@@ -380,6 +380,7 @@ function normalize(o){
   o.professores = Array.isArray(o.professores) ? o.professores.filter(p => p && p.id) : [];
   o.professores.forEach(p => { p.indisp = (Array.isArray(p.indisp) ? p.indisp : []).filter(x => /^\d-\d{4}$/.test(x)); p.nome = p.nome ?? '';
     p.limite = Math.max(1, Math.min(60, parseInt(p.limite, 10) || LIM_DEF));
+    p.maxTurmas = p.maxTurmas == null || p.maxTurmas === '' ? null : Math.max(1, Math.min(60, parseInt(p.maxTurmas, 10) || 1));
     p.pl = Math.max(0, Math.min(30, parseInt(p.pl, 10) || 0)); if (p.plModo !== 'manual') p.plModo = 'auto';
     p.plFix = range(0, 6).map(d => Math.max(0, Math.min(14, parseInt((p.plFix || [])[d], 10) || 0)));
     if (!Array.isArray(p.discs)){ p.discs = []; for (const t in (o.atrib || {})) for (const d in o.atrib[t]) if (o.atrib[t][d]?.prof === p.id && !p.discs.includes(d)) p.discs.push(d); } });
@@ -463,12 +464,18 @@ function freeSlots(p, h){ let f = 0; const tl = timeline(h); for (let d = 0; d <
    Cada turma fica inteira com um professor. Busca: decrescente por nº de aulas + melhor encaixe, com 300 tentativas
    embaralhadas; vence a que deixa menos aulas sem professor e concentra cada professor em menos horários. */
 function rng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+/* Distribui as turmas de uma disciplina entre os professores habilitados.
+   Cada turma fica inteira com um professor; ninguém passa do próprio máximo (aulas e, se informado, turmas).
+   Modo "equilibrar" (padrão): divide por igual entre a equipe necessária (4 turmas de 6 aulas → 12 + 12).
+   Modo "completar": enche um professor até o máximo antes de passar ao próximo (18 + 6). */
 function distribuir(did){
-  const rnd = rng(12345);
+  const rnd = rng(12345), equil = S.escola.distModo !== 'completar';
   const d = byId(S.disciplinas, did);
   const items = S.turmas.filter(t => aulas(t, d) > 0).map(t => ({t, n: aulas(t, d), h: hOf(t)}));
   const ps = habilitados(did);
   const base = new Map(ps.map(p => [p.id, profLoad(p.id, did)]));
+  const baseT = new Map(ps.map(p => [p.id, S.turmas.filter(t => S.disciplinas.some(dd => dd.id !== did && profOf(t, dd) === p.id && aulas(t, dd) > 0)).length]));
+  const capT = p => p.maxTurmas ? p.maxTurmas : Infinity;
   const baseH = new Map(ps.map(p => [p.id, new Map()]));
   for (const t of S.turmas) for (const dd of S.disciplinas){ if (dd.id === did) continue; const pid = profOf(t, dd); if (baseH.has(pid)){ const m = baseH.get(pid); m.set(t.h, (m.get(t.h) || 0) + aulas(t, dd)); } }
   const free = new Map(ps.map(p => [p.id, new Map(S.horarios.map(h => [h.id, freeSlots(p, h)]))]));
@@ -477,20 +484,23 @@ function distribuir(did){
   for (let it = 0; it < tries; it++){
     const key = new Map(items.map(x => [x, x.n + (it ? rnd() * 1.6 : 0)]));
     const order = items.slice().sort((a, b) => key.get(b) - key.get(a));
-    const load = new Map(base), lh = new Map(ps.map(p => [p.id, new Map(baseH.get(p.id))])), asg = new Map(); let un = 0;
+    const load = new Map(base), nt = new Map(baseT), lh = new Map(ps.map(p => [p.id, new Map(baseH.get(p.id))])), asg = new Map(); let un = 0;
     for (const x of order){
       let bp = null, bs = Infinity;
       for (const p of ps){
         const rem = p.limite - load.get(p.id) - x.n; if (rem < 0) continue;
+        if (nt.get(p.id) + 1 > capT(p)) continue;
         const used = lh.get(p.id).get(x.h.id) || 0; if (used + x.n > free.get(p.id).get(x.h.id)) continue;
-        const sc = rem - (used > 0 ? 2 : 0) + (it ? rnd() * 1.5 : 0);
+        const fr = (load.get(p.id) + x.n) / p.limite;
+        const sc = (equil ? fr * 10 : rem) - (used > 0 ? (equil ? 0.8 : 2) : 0) + (it ? rnd() * 1.5 : 0);
         if (sc < bs){ bs = sc; bp = p; }
       }
-      if (bp){ asg.set(x.t.id, bp.id); load.set(bp.id, load.get(bp.id) + x.n); const m = lh.get(bp.id); m.set(x.h.id, (m.get(x.h.id) || 0) + x.n); }
+      if (bp){ asg.set(x.t.id, bp.id); load.set(bp.id, load.get(bp.id) + x.n); nt.set(bp.id, nt.get(bp.id) + 1); const m = lh.get(bp.id); m.set(x.h.id, (m.get(x.h.id) || 0) + x.n); }
       else { asg.set(x.t.id, ''); un += x.n; }
     }
     const pairs = new Set(); for (const x of items){ const p = asg.get(x.t.id); if (p) pairs.add(p + '|' + x.h.id); }
-    const score = un * 1000 + pairs.size;
+    let sq = 0; for (const p of ps){ const f = load.get(p.id) / p.limite; sq += f * f; }
+    const score = un * 1000 + pairs.size * 2 + (equil ? sq * 6 : -sq * 6);
     if (!best || score < best.score) best = {score, asg, un};
   }
   for (const x of items) setAtrib(x.t.id, did, 'prof', best.asg.get(x.t.id) || '');
@@ -511,7 +521,7 @@ function criarFaltantes(){
     while (un > 0 && guard++ < 30){
       const t = semProfTurmas(d)[0]; if (!t) break;
       const k = habilitados(d.id).length + 1;
-      S.professores.push({id: nid('p'), nome: `Professor(a) ${dLabel(d)} ${k}`, limite: hOf(t).limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [d.id], indisp: [], auto: true}); created++;
+      S.professores.push({id: nid('p'), maxTurmas: null, nome: `Professor(a) ${dLabel(d)} ${k}`, limite: hOf(t).limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [d.id], indisp: [], auto: true}); created++;
       un = distribuir(d.id);
     }
   }
@@ -999,7 +1009,6 @@ function vEscola(){
       <div class="fld"><span>Duração de cada aula</span><div class="durrow"><div class="seg-btns" role="group" aria-label="Duração da aula">${[45, 50, 55, 60].map(v => `<button data-k="dur" data-v="${v}" aria-pressed="${e.dur === v}">${v}</button>`).join('')}</div>
         <input type="number" min="20" max="120" id="e-dur" data-c="esc" data-key="dur" value="${e.dur}" aria-label="Outra duração em minutos"> min</div></div>
       <label class="fld"><span>Máx. aulas da mesma disciplina por dia (padrão)</span><input type="number" id="e-maxDia" min="1" max="6" value="${e.maxDia}" data-c="esc" data-key="maxDia"></label>
-      <label class="chk"><input type="checkbox" id="e-gem" data-c="esc" data-key="gem" ${e.gem ? 'checked' : ''}><span>Padrão da escola: geminar aulas (2 aulas da mesma disciplina no mesmo dia ficam em sequência, sem almoço no meio). Cada disciplina pode ter a sua própria regra na etapa Disciplinas.</span></label>
     </div>
   </section>
   <section class="panel">
@@ -1074,9 +1083,10 @@ function calcHTML(){
       <div class="tscroll"><table class="list"><thead><tr><th>Disciplina</th><th>Conta (aulas × turmas)</th><th>Aulas/sem.</th><th>Carga horária</th><th>Mínimo de prof.</th><th>Quem atende (aulas)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
       ${porAno ? `<div class="tscroll"><table class="list"><thead><tr><th>Ano</th><th>Turmas</th><th>Aulas/sem.</th><th>Carga horária</th></tr></thead><tbody>${porAno}</tbody></table></div>` : ''}
     </div>
+    <label class="fld" style="max-width:420px"><span>Como dividir as turmas entre os professores</span><select id="e-dist" data-c="distModo"><option value="equilibrar" ${S.escola.distModo !== 'completar' ? 'selected' : ''}>Equilibrar (ex.: 4 turmas → 2 + 2)</option><option value="completar" ${S.escola.distModo === 'completar' ? 'selected' : ''}>Completar o máximo de um antes do outro (ex.: 3 + 1)</option></select></label>
     <label class="chk"><input type="checkbox" id="e-auto" data-c="autoProf" ${autoOn() ? 'checked' : ''}><span>Ajustar a equipe sozinho ao mudar o número de turmas: distribui as turmas entre os professores cadastrados e cria (ou remove) professores genéricos para fechar a conta.</span></label>
     <div class="row">${autoOn() ? '' : `<button class="btn pri" data-k="criarDist" id="b-criarDist">Criar professores que faltam e distribuir turmas</button>`}${distMsg ? `<span class="hint" style="color:var(--good)">${esc(distMsg)}</span>` : ''}</div>
-    <p class="hint">Professores genéricos (em itálico) são removidos e recriados a cada ajuste; ao renomear ou editar um deles na etapa Professores, ele passa a ser fixo. O mínimo considera que cada turma fica inteira com um professor e que ninguém passa do limite (ex.: Português com 6 aulas por turma e limite 18 → 3 turmas por professor). Um professor que leciona mais de uma disciplina pode reduzir o total.</p>
+    <p class="hint">Professores genéricos (em itálico) são removidos e recriados a cada ajuste; ao renomear ou editar um deles na etapa Professores, ele passa a ser fixo. O mínimo de professores considera que cada turma fica inteira com um professor e que ninguém passa do máximo; as turmas são então divididas por igual entre eles. Um professor que leciona mais de uma disciplina pode reduzir o total.</p>
   </section>`;
 }
 function vTurmas(){
@@ -1145,7 +1155,7 @@ function contaCell(d){
 function vDisc(){
   const H = S.horarios; if (!byId(H, discH)) discH = H[0]?.id;
   const h = byId(H, discH);
-  const gemOpts = d => [['padrao', `Padrão (${S.escola.gem ? 'geminar' : 'tanto faz'})`],['sim','Geminar (em dupla)'],['nao','Separar (1 por dia)'],['livre','Tanto faz']].map(([v, n]) => `<option value="${v}" ${d.gem === v ? 'selected' : ''}>${n}</option>`).join('');
+  const gemOpts = d => { const g = regraDisc(d).g; return [['nao','Uma por dia'],['sim','Geminada (em dupla)'],['livre','Tanto faz']].map(([v, n]) => `<option value="${v}" ${g === v ? 'selected' : ''}>${n}</option>`).join(''); };
   const tabs = `<div class="tabs" role="tablist">${H.map(x => `<button class="tab" role="tab" data-k="discTab" data-id="${x.id}" aria-selected="${x.id === discH}">${esc(x.nome)}</button>`).join('')}</div>`;
   const grupos = [...S.etapas.map(e => [e, etapaInfo(e).nome]), ...(S.disciplinas.some(d => !d.etapa) ? [['', 'Todas as etapas']] : [])];
   const tables = grupos.map(([eid, nome]) => {
@@ -1161,7 +1171,7 @@ function vDisc(){
       <td><input type="number" min="1" max="9" id="dm-${d.id}" data-c="dmax" data-id="${d.id}" value="${d.gem === 'nao' ? 1 : (d.maxDia ?? '')}" placeholder="${S.escola.maxDia}" ${d.gem === 'nao' ? 'disabled' : ''} aria-label="Máximo de aulas por dia"></td>
       <td><button class="btn ghost" data-k="delD" data-id="${d.id}">Remover</button></td></tr>`; };
     return `<div class="dgrp"><div class="row end"><h3>${esc(nome)}</h3>${eid ? `<button class="btn" data-k="addD" data-etapa="${eid}">+ Disciplina</button>` : ''}</div>
-      <div class="tscroll"><table class="list dtab"><thead><tr><th></th><th>Disciplina</th><th>Sigla</th><th class="padc">Todos os anos</th>${anos.map(a => `<th>${esc(a.curto || a.nome)}</th>`).join('')}<th>Total na escola (automático)</th><th>Geminadas</th><th style="white-space:normal">Máx. por dia</th><th></th></tr></thead>
+      <div class="tscroll"><table class="list dtab"><thead><tr><th></th><th>Disciplina</th><th>Sigla</th><th class="padc">Todos os anos</th>${anos.map(a => `<th>${esc(a.curto || a.nome)}</th>`).join('')}<th>Total na escola (automático)</th><th>Aula única ou geminada</th><th style="white-space:normal">Máx. por dia</th><th></th></tr></thead>
       <tbody>${ds.map(row).join('') || `<tr><td colspan="${anos.length + 9}" class="sm">Nenhuma disciplina.</td></tr>`}</tbody>
       <tfoot><tr class="sub"><td></td><td colspan="3">Aulas por turma / horários do período</td>${anos.map(a => `<td id="dtot-${a.id}">${chipCap(anoTot(a.id, h.id), capacidade(h))}</td>`).join('')}<td colspan="4"></td></tr></tfoot></table></div></div>`;
   }).join('');
@@ -1169,7 +1179,7 @@ function vDisc(){
     <div class="panel-h"><h2>Disciplinas e aulas por semana</h2><p class="lede">Aulas semanais <b>por turma</b>, por ano e por período. “Todos os anos” vale para os anos que você não mudou; troque o número de um ano para ele ter um valor próprio (borda laranja) ou coloque 0 se a disciplina não existe naquele ano. O total da escola é calculado sozinho: aulas por turma × número de turmas.</p></div>
     ${H.length > 1 ? tabs : ''}
     ${tables || '<p class="hint">Escolha a etapa de ensino na etapa 1.</p>'}
-    <p class="hint">Geminadas: “Geminar” coloca as aulas em dupla no mesmo dia (sem almoço no meio); “Separar” deixa no máximo 1 aula por dia; “Tanto faz” só respeita o máximo por dia. Máx. por dia vazio usa o padrão da escola (${S.escola.maxDia}).</p>
+    <p class="hint">Aula: “Uma por dia” espalha as aulas em dias diferentes; “Geminada” junta 2 aulas seguidas no mesmo dia (sem almoço no meio), como costuma ser em Português e Matemática; “Tanto faz” só respeita o máximo por dia. Máx. por dia vazio usa o padrão da escola (${S.escola.maxDia}).</p>
   </section>`;
 }
 function refreshDisc(){
@@ -1241,16 +1251,16 @@ function vProf(){
       <td><input class="w-name" id="pn-${p.id}" data-a="pnome" data-id="${p.id}" value="${esc(p.nome)}" aria-label="Nome do professor"><div class="sm" style="margin-top:4px">${esc(inf.txt) || 'Sem turmas atribuídas'}</div></td>
       <td><div class="dchips">${chips || '<span class="sm">Cadastre disciplinas</span>'}</div></td>
       <td>${cargaCell(p)}</td>
-      <td><div class="eqv"><input type="number" min="1" max="60" id="pl-${p.id}" data-c="plim" data-id="${p.id}" value="${p.limite}" aria-label="Máximo de aulas de ${esc(p.nome)}"> aulas</div><div class="eqv"><input type="number" min="1" max="80" step="0.5" id="ph-${p.id}" data-c="phoras" data-id="${p.id}" value="${p.horas ?? Math.round(p.limite * razaoH(p) * 10) / 10}" aria-label="Máximo em horas de ${esc(p.nome)}"> h</div></td>
+      <td><div class="eqv"><input type="number" min="1" max="60" id="pl-${p.id}" data-c="plim" data-id="${p.id}" value="${p.limite}" aria-label="Máximo de aulas de ${esc(p.nome)}"> aulas</div><div class="eqv"><input type="number" min="1" max="80" step="0.5" id="ph-${p.id}" data-c="phoras" data-id="${p.id}" value="${p.horas ?? Math.round(p.limite * razaoH(p) * 10) / 10}" aria-label="Máximo em horas de ${esc(p.nome)}"> h</div><div class="eqv"><input type="number" min="1" max="60" id="pt-${p.id}" data-c="pturmas" data-id="${p.id}" value="${p.maxTurmas ?? ''}" placeholder="—" aria-label="Máximo de turmas de ${esc(p.nome)}"> turmas</div></td>
       <td>${plCell(p)}</td>
       <td><button class="btn" data-k="toggleP" data-id="${p.id}" aria-expanded="${open}">${bl ? `${durTxt(bl * 30)} bloqueadas` : 'Disponível sempre'} ${open ? '▴' : '▾'}</button></td>
       <td><button class="btn ghost" data-k="delP" data-id="${p.id}">Remover</button></td></tr>
       ${open ? `<tr><td colspan="7">${unavGrid(p)}</td></tr>` : ''}`; }).join('');
   return `<section class="panel">
-    <div class="panel-h"><h2>Professores</h2><p class="lede">A carga de cada professor é calculada sozinha: aulas da disciplina por turma × número de turmas que ele assume (ex.: Inglês com 1 aula e 10 turmas = 10 aulas). O máximo (ex.: 18) é só o teto; ninguém é obrigado a chegar nele. Com isso a etapa Atribuição divide as turmas sem passar do limite de ninguém.</p></div>
-    <div class="tscroll"><table class="list"><thead><tr><th>Professor</th><th>Disciplinas que leciona</th><th>Carga semanal (automática)</th><th>Máximo (aulas ou horas)</th><th>PLs (automático)</th><th>Indisponibilidade</th><th></th></tr></thead>
+    <div class="panel-h"><h2>Professores</h2><p class="lede">A carga de cada professor é calculada sozinha: aulas da disciplina por turma × número de turmas que ele assume (ex.: Português 6 aulas × 2 turmas = 12 aulas). Ninguém precisa completar o máximo: a distribuição divide as turmas por igual. Se a pessoa só pode pegar menos, informe o máximo dela em aulas, horas ou turmas. Com isso a etapa Atribuição divide as turmas sem passar do limite de ninguém.</p></div>
+    <div class="tscroll"><table class="list"><thead><tr><th>Professor</th><th>Disciplinas que leciona</th><th>Carga semanal (automática)</th><th>Carga desta pessoa (máx.)</th><th>PLs (automático)</th><th>Indisponibilidade</th><th></th></tr></thead>
     <tbody>${rows || '<tr><td colspan="7" class="sm">Nenhum professor ainda.</td></tr>'}</tbody></table></div>
-    <div class="row"><button class="btn pri" data-k="addP" id="b-addP">+ Professor</button><span class="hint">Exemplos: Português com 6 aulas por turma e máximo 18 → um professor atende até 3 turmas (18 aulas). Inglês com 1 aula e 10 turmas → 10 aulas.</span></div>
+    <div class="row"><button class="btn pri" data-k="addP" id="b-addP">+ Professor</button><span class="hint">Exemplo: 4 turmas de Português com 6 aulas → 2 professores com 2 turmas cada (12 aulas). Se um deles só pode pegar 1 turma, coloque 1 em “turmas”.</span></div>
     <p class="hint">PLs: por padrão são proporcionais às aulas que o professor realmente tem (definido em “PLs com carga cheia” na etapa 1); quem tem poucas aulas recebe menos PL. Use “Manual” para um caso específico. Nas casinhas dos dias, marque quantos são fixos (ex.: PL de área na quarta). Os demais são aleatórios: o algoritmo encaixa onde for melhor, de preferência nas janelas do professor e em dias em que ele já está na escola.</p>
   </section>`;
 }
@@ -1527,14 +1537,16 @@ function onChange(e){
   if (c === 'hlim'){ const old = H.limite; H.limite = Math.max(1, Math.min(60, parseInt(el.value, 10) || LIM_DEF)); const n = aplicarHorario(H, 'limite', old);
     hMsg[H.id] = `Limite ${H.limite} aplicado a ${n} professor${n === 1 ? '' : 'es'} deste horário.`; changed(); render(); return; }
   if (c === 'hhoras'){ H.horas = Math.max(1, Math.min(80, parseFloat(el.value) || 25)); hMsg[H.id] = `${H.limite} aulas equivalem a ${H.horas} h semanais (1 aula ≈ ${durTxt(Math.round(H.horas / H.limite * 60))} de contrato).`; changed(); render(); return; }
-  if (c === 'phoras'){ const p = byId(S.professores, el.dataset.id); p.auto = false; const r = razaoH(p), hv = Math.max(1, Math.min(80, parseFloat(el.value) || 0)); p.limite = Math.max(1, Math.min(60, Math.round(hv / r))); p.horas = hv; changed(); render(); return; }
+  if (c === 'pturmas'){ const p = byId(S.professores, el.dataset.id); p.auto = false; const v = parseInt(el.value, 10); p.maxTurmas = isNaN(v) ? null : Math.max(1, Math.min(60, v)); if (autoOn() && S.turmas.length) ajustarEquipe(); changed(); render(); return; }
+  if (c === 'distModo'){ S.escola.distModo = el.value; if (S.turmas.length) ajustarEquipe(); changed(); render(); return; }
+  if (c === 'phoras'){ const p = byId(S.professores, el.dataset.id); p.auto = false; const r = razaoH(p), hv = Math.max(1, Math.min(80, parseFloat(el.value) || 0)); p.limite = Math.max(1, Math.min(60, Math.round(hv / r))); p.horas = hv; if (autoOn() && S.turmas.length) ajustarEquipe(); changed(); render(); return; }
   if (c === 'hpl'){ const v = parseInt(el.value, 10); H.pl = Math.max(0, Math.min(30, isNaN(v) ? 0 : v));
     const ex = [H.limite, Math.round(H.limite * 2 / 3), Math.round(H.limite / 3)].map(n => `${n} aulas → ${Math.round(n * H.pl / H.limite)} PL`).join(' · ');
     hMsg[H.id] = `PL proporcional às aulas de cada professor: ${ex}.`; changed(); render(); return; }
   if (c === 'ppl'){ const p = byId(S.professores, el.dataset.id); p.auto = false; const v = parseInt(el.value, 10); p.pl = Math.max(0, Math.min(30, isNaN(v) ? 0 : v)); p.plModo = 'manual'; changed(); render(); return; }
   if (c === 'pmodo'){ const p = byId(S.professores, el.dataset.id); p.auto = false; if (el.value === 'manual' && p.plModo !== 'manual') p.pl = plCalc(p); p.plModo = el.value; changed(); render(); return; }
   if (c === 'pfix'){ const p = byId(S.professores, el.dataset.id); p.auto = false; p.plFix[+el.dataset.d] = Math.max(0, Math.min(14, parseInt(el.value, 10) || 0)); if (p.plModo === 'manual'){ const sf = p.plFix.slice(0, S.escola.dias).reduce((a, b) => a + (+b || 0), 0); if (sf > p.pl) p.pl = sf; } changed(); render(); return; }
-  if (c === 'plim'){ const p = byId(S.professores, el.dataset.id); p.auto = false; delete p.horas; p.limite = Math.max(1, Math.min(60, parseInt(el.value, 10) || p.limite)); changed(); render(); return; }
+  if (c === 'plim'){ const p = byId(S.professores, el.dataset.id); p.auto = false; delete p.horas; p.limite = Math.max(1, Math.min(60, parseInt(el.value, 10) || p.limite)); if (autoOn() && S.turmas.length) ajustarEquipe(); changed(); render(); return; }
   if (c === 'haulas'){ H.aulas = Math.max(1, Math.min(14, parseInt(el.value, 10) || H.aulas)); [H.intervalos, ...Object.values(H.ivEt || {})].forEach(l => l.forEach(iv => { if (iv.apos >= H.aulas) iv.apos = Math.max(1, H.aulas - 1); })); changed(); render(); return; }
   if (c === 'ivapos'){ IV[x].apos = +el.value; changed(); render(); return; }
   if (c === 'ivmin'){ IV[x].min = Math.max(0, Math.min(240, parseInt(el.value, 10) || 0)); changed(); render(); return; }
@@ -1580,7 +1592,7 @@ function onClick(e){
     case 'criarDist': { distribuirTodas(); const n = criarFaltantes(); const rest = S.disciplinas.reduce((s, d) => s + demandaInfo(d).un, 0);
       distMsg = `${n} professor(es) criado(s) e turmas distribuídas.` + (rest ? ` Ainda faltam ${rest} aulas sem professor.` : ' Veja e renomeie na etapa Professores.'); changed(); render(); return; }
     case 'delT': S.turmas = S.turmas.filter(t => t.id !== id); delete S.atrib[id]; if (autoOn()) ajustarEquipe(); changed(); render(); return;
-    case 'addD': { const d = {id: nid('d'), etapa: b.dataset.etapa || '', nome: 'Nova disciplina', sigla: '', carga: {}, c: {}, gem: 'padrao', maxDia: null}; S.disciplinas.push(d); pendingFocus = 'dn-' + d.id; changed(); render(); return; }
+    case 'addD': { const d = {id: nid('d'), etapa: b.dataset.etapa || '', nome: 'Nova disciplina', sigla: '', carga: {}, c: {}, gem: 'nao', maxDia: null}; S.disciplinas.push(d); pendingFocus = 'dn-' + d.id; changed(); render(); return; }
     case 'delD': S.disciplinas = S.disciplinas.filter(d => d.id !== id); for (const t in S.atrib) delete S.atrib[t][id]; changed(); render(); return;
     case 'addP': { const p = {id: nid('p'), nome: `Professor(a) ${S.professores.length + 1}`, limite: S.horarios[0]?.limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [], indisp: []}; S.professores.push(p); pendingFocus = 'pn-' + p.id; changed(); render(); return; }
     case 'delP': S.professores = S.professores.filter(p => p.id !== id); for (const t in S.atrib) for (const d in S.atrib[t]) if (S.atrib[t][d].prof === id) S.atrib[t][d].prof = ''; if (openProf === id) openProf = null; changed(); render(); return;
