@@ -2,7 +2,7 @@ name: Gerar APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, grade-horaria]
   workflow_dispatch:
 
 permissions:
@@ -45,10 +45,11 @@ jobs:
       - name: Publicar na página de Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
+          tag_name: grade-horaria-v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
           name: Grade Horária 1.0.${{ github.run_number }}
           body: |
             APK para Android 7 ou superior.
             Baixe **GradeHoraria.apk** abaixo, abra no celular e permita a instalação de fontes desconhecidas quando o Android pedir.
           files: GradeHoraria.apk
-          make_latest: true
+          make_latest: false

@@ -6,13 +6,13 @@ App Android para montar a grade horária da escola: turmas de tempo parcial, int
 
 ## Baixar o APK
 
-Abra a aba **Releases** deste repositório e baixe `GradeHoraria.apk` da versão mais recente. No celular, abra o arquivo e permita a instalação de fontes desconhecidas quando o Android pedir.
+Abra a aba **Releases** deste repositório e baixe `GradeHoraria.apk` da versão mais recente com nome **Grade Horária**. No celular, abra o arquivo e permita a instalação de fontes desconhecidas quando o Android pedir.
 
 Os dados ficam salvos no próprio celular. Para levar a outro aparelho, use **Copiar dados** e **Importar** na etapa 1.
 
 ## Como o APK é gerado
 
-A cada envio para a branch `main`, o GitHub Actions (`.github/workflows/apk.yml`) compila o app e publica o APK numa nova Release. Também dá para rodar manualmente em **Actions → Gerar APK → Run workflow**.
+A cada envio para a branch `grade-horaria` (ou `main`, se o projeto for movido para um repositório próprio), o GitHub Actions (`.github/workflows/apk.yml`) compila o app e publica o APK numa nova Release. Também dá para rodar manualmente em **Actions → Gerar APK → Run workflow**.
 
 ## Estrutura
 
