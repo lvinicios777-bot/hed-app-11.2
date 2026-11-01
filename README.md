@@ -68,6 +68,16 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.3
+
+- **Filtro de 6 itens** (lance legal, tática imediata, material, rei, ameaças urgentes, recursos forçantes do adversário): marcado automaticamente pelo motor ao importar; um item só reprova quando a posição mostra o problema **e** o motor confirma custo > 0,5 peão. O relatório diz qual item eliminou o lance.
+- **Eficiência de Conversão** (0–10): com E ≥ 70% (≈ +2,3), U ganha 0,3 × (Conversão − 5) e a Conversão entra no Pareto e no MA. Sobe com trocas, poucas respostas do adversário e rei seguro; cai com xeques e capturas disponíveis para ele.
+- **Confiança honesta com notas automáticas:** o ruído por nota sobe de 1 para até 2 pontos conforme a fração de notas "auto"; o empate (τ) e o IFE acompanham.
+- **Empate:** lance dentro da MI vence lance que pagou λ; depois MA; depois menor perda.
+- **Peão de ala** (a6, h6… de uma casa, longe do rei) conta como flexível (Baixo compromisso 6).
+- **Sem WDL**, FC e Assimetria são estimadas pela tensão da posição (peças atacadas) e pela estrutura.
+- **TF** só para xeque, captura ou sequência com 2+ lances forçantes; a tela TF não mostra mais números de exemplo.
+
 ## Fórmulas
 
 - FO = 0,30·Forçamento + 0,20·Urgência + 0,30·Atividade + 0,20·Eficiência
@@ -75,8 +85,8 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - Robustez = 0,40·Estrutura + 0,30·Valor de opção + 0,30·Flexibilidade
 - ATP = 0,40·FO + 0,30·FC + 0,20·Robustez + 0,10·Assimetria (inalterada)
 - E = W + D/2 (WDL) ou E = 100 / (1 + e^(−0,00368208·cp))
-- U = ATP − λ·max(0, Δ − MI), com Δ ≤ MI + 2 pp
-- τ = desvio da diferença de ATP com ruído de 1 ponto por nota ≈ 0,55
+- U = ATP − λ·max(0, Δ − MI) [+ 0,3·(Conversão − 5) se E ≥ 70%], com Δ ≤ MI + 2 pp
+- τ = desvio da diferença de ATP com ruído de 1 ponto por nota ≈ 0,55 (até ≈ 1,11 com notas todas estimadas)
 - MA (Savage): maior distância até o melhor valor em FO, FC, Robustez e Assimetria; vence o menor
 - IFE = Φ((U₁ − U₂)/τ): A+ ≥ 98%, A ≥ 93%, B ≥ 85%, C ≥ 70%, D abaixo
 - TF × Conversão: p* = (E_tranq − E_falha) / (E_fim − E_falha); a TF vale se p > p*

@@ -563,10 +563,18 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
     c = Candidato(lance=o.san, delta=delta, w=w, d=d, l=l, aval_cp=o.cp)
     if board is not None:
         try:
-            from hed_auto import estimar_notas
-            for k, v in estimar_notas(board, chess.Move.from_uci(o.uci), o.wdl, o.mate).items():
+            from hed_auto import estimar_notas, conversao, filtro_auto
+            m = chess.Move.from_uci(o.uci)
+            for k, v in estimar_notas(board, m, o.wdl, o.mate).items():
                 setattr(c, k, v)
                 c.auto.append(k)
+            c.conversao = conversao(board, m)
+            c.auto.append("conversao")
+            f = filtro_auto(board, o, delta)
+            if f is not None:
+                c.filtro = f
+                c.atualizar_filtro()
+                c.auto.append("filtro")
         except Exception:
             aplicar_sugestoes(c)
     else:

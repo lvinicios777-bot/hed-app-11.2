@@ -30,6 +30,7 @@ ROTULOS = {
     "reversibilidade": "Reversibilidade", "eficiencia": "Eficiência",
     "atividade": "Atividade", "estrutura": "Estrutura/solidez",
     "fo": "FO", "fc": "FC", "robustez": "Robustez", "assimetria": "Assimetria",
+    "conversao": "Conversão",
 }
 
 # ---- Pesos (regra RP: só alterar após padrão em ~5–10 posições comparáveis).
@@ -47,6 +48,19 @@ EXTRA_MAX_PP = 2.0           # teto: eliminado se Δ > MI + EXTRA_MAX_PP
 SIGMA_NOTA = 1.0             # ruído típico de uma nota subjetiva (0–10)
 FAIXAS_PP = [(1.0, "equivalente"), (2.0, "excelente"), (3.0, "boa"), (5.5, "inferior")]
 MI_CP = 0.10                 # mantido só para compatibilidade com dados salvos da 11.2
+SIGMA_AUTO = 2.0             # ruído de uma nota estimada pelo app (erro sistemático > o seu)
+LIMIAR_GANHO = 70.0          # E ≥ 70% (≈ +2,3 peões): Eficiência de Conversão entra no U
+KAPPA_CONV = 0.3             # U ganha 0,3 por ponto de Conversão acima de 5 quando ganhando
+
+FILTRO_ITENS = ["legalidade", "tatica", "material", "reis", "ameacas", "recursos"]
+FILTRO_ROTULOS = {
+    "legalidade": "Lance legal",
+    "tatica": "Sem tática imediata contra",
+    "material": "Não perde material",
+    "reis": "Rei seguro",
+    "ameacas": "Responde às ameaças urgentes",
+    "recursos": "Sem recurso forçante do adversário",
+}
 
 
 def pontuacao_cp(cp: float) -> float:
@@ -99,6 +113,16 @@ class Candidato:
     n_lichess: Optional[int] = None
     pts_lichess: Optional[float] = None
     auto: List[str] = field(default_factory=list)   # notas estimadas pelo app (não ajustadas)
+    filtro: Dict[str, bool] = field(default_factory=dict)   # 6 itens do filtro obrigatório
+    conversao: Optional[float] = None    # Eficiência de Conversão 0–10 (só pesa quando ganhando)
+
+    def falhas_filtro(self) -> List[str]:
+        return [k for k in FILTRO_ITENS if self.filtro.get(k) is False]
+
+    def atualizar_filtro(self) -> None:
+        """filtro_ok = todos os itens marcados (quando o checklist de 6 itens existe)."""
+        if self.filtro:
+            self.filtro_ok = all(self.filtro.get(k, False) for k in FILTRO_ITENS)
 
     # ---- notas
     def faltando(self) -> List[str]:
@@ -220,10 +244,12 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     # 1. Filtro obrigatório (checklist do jogador)
     ativos = []
     for c in cands:
+        c.atualizar_filtro()
         if c.filtro_ok:
             ativos.append(c)
         else:
-            res["eliminados"].append((c.lance, "falhou no filtro obrigatório"))
+            falhas = [FILTRO_ROTULOS[k].lower() for k in c.falhas_filtro()]
+            res["eliminados"].append((c.lance, "filtro obrigatório" + (f": {', '.join(falhas)}" if falhas else "")))
     if not ativos:
         res["avisos"].append("Nenhum candidato passou no filtro.")
         return res
@@ -279,13 +305,28 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
             f"{l} ({len(f)})" for l, f in incompletos.items()))
         return res
 
+    # Ruído das notas: notas estimadas pelo app valem como medida menos confiável
+    slots = len(admit) * len(NOTAS)
+    frac_auto = sum(len([k for k in c.auto if k in NOTAS]) for c in admit) / slots
+    sigma = SIGMA_NOTA + (SIGMA_AUTO - SIGMA_NOTA) * frac_auto
+    tau = sigma_diferenca(sigma)
+    res.update(sigma=round(sigma, 2), tau=round(tau, 2), frac_auto=round(frac_auto, 2))
+
     excesso = {c.lance: max(0.0, rel[c.lance] - mi_pp) for c in admit}
     U = {c.lance: c.atp - LAMBDA * excesso[c.lance] for c in admit}
+
+    # Eficiência de Conversão: em posição ganha, favorece o lance que converte com menos risco
+    res["ganhando"] = e_max >= LIMIAR_GANHO
+    res["conversao_ativa"] = res["ganhando"] and all(c.conversao is not None for c in admit)
+    if res["conversao_ativa"]:
+        for c in admit:
+            U[c.lance] += KAPPA_CONV * (c.conversao - 5.0)
     res["U"] = U
 
     # 4. Pareto: diferenças de Δ dentro da MI não contam (ruído do motor)
     def vetor(c):
-        return [-excesso[c.lance], c.fo, c.fc, c.robustez, c.assimetria]
+        v = [-excesso[c.lance], c.fo, c.fc, c.robustez, c.assimetria]
+        return v + [c.conversao] if res["conversao_ativa"] else v
 
     nao_dom = [c for c in admit if not any(_domina(vetor(o), vetor(c)) for o in admit if o is not c)]
     res["dominados"] = [c.lance for c in admit if c not in nao_dom]
@@ -293,15 +334,20 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     # 5. Maior U; empate (< τ) -> MA de Savage -> menor Δ
     nao_dom.sort(key=lambda c: U[c.lance], reverse=True)
     topo = U[nao_dom[0].lance]
-    empatados = [c for c in nao_dom if topo - U[c.lance] < TAU - 1e-9]
+    empatados = [c for c in nao_dom if topo - U[c.lance] < tau - 1e-9]
     dims = (("FO", lambda c: c.fo), ("FC", lambda c: c.fc),
             ("Rob", lambda c: c.robustez), ("Assim", lambda c: c.assimetria))
+    if res["conversao_ativa"]:
+        dims += (("Conv", lambda c: c.conversao),)
     melhor_d = {n: max(f(c) for c in nao_dom) for n, f in dims}
     res["ma"] = {c.lance: round(max(melhor_d[n] - f(c) for n, f in dims), 2) for c in nao_dom}
     if len(empatados) > 1:
-        escolha = min(empatados, key=lambda c: (res["ma"][c.lance], rel[c.lance]))
-        res["motivo"] = (f"empate de U (< {TAU:.2f}) entre {', '.join(c.lance for c in empatados)}"
-                         f" -> menor arrependimento (MA {res['ma'][escolha.lance]:.2f}) -> menor perda")
+        # no empate, quem está dentro da MI vence quem pagou λ; depois MA; depois menor perda
+        escolha = min(empatados, key=lambda c: (excesso[c.lance] > 0, res["ma"][c.lance], rel[c.lance]))
+        fora = [c.lance for c in empatados if excesso[c.lance] > 0]
+        res["motivo"] = (f"empate de U (< {tau:.2f}) entre {', '.join(c.lance for c in empatados)}"
+                         + (f" -> fora da MI perdem o empate ({', '.join(fora)})" if fora else "")
+                         + f" -> menor arrependimento (MA {res['ma'][escolha.lance]:.2f}) -> menor perda")
     else:
         escolha = nao_dom[0]
         res["motivo"] = "maior U"
@@ -311,11 +357,11 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     # 6. IFE: probabilidade de a ordem 1º > 2º não ser ruído das notas
     outros = [U[c.lance] for c in nao_dom if c is not escolha]
     margem = U[escolha.lance] - max(outros) if outros else None
-    conf = 100.0 if margem is None else 100.0 * _phi(max(margem, 0.0) / TAU)
+    conf = 100.0 if margem is None else 100.0 * _phi(max(margem, 0.0) / tau)
     res["ife"] = (_nivel_ife(conf), None if margem is None else round(margem, 2), round(conf))
 
     # 7. TOP como auditoria: onde a escolha perde para cada rival (não vota)
-    nomes = ("perda além da MI", "FO", "FC", "Robustez", "Assimetria")
+    nomes = ("perda além da MI", "FO", "FC", "Robustez", "Assimetria", "Conversão")
     res["auditoria"] = []
     for o in nao_dom:
         if o is escolha:
@@ -335,6 +381,8 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         "Melhor estratégico": melhor_por(lambda c: c.media_estrategica),
         "Mais forçante": melhor_por(lambda c: c.forcamento),
         "Mais robusto": melhor_por(lambda c: c.robustez),
+        **({"Melhor conversão": melhor_por(lambda c: c.conversao)}
+           if all(c.conversao is not None for c in admit) else {}),
         "Mais prático": melhor_por(lambda c: c.forcamento + c.atividade),
         "Maior FC": melhor_por(lambda c: c.fc),
         "Maior FO": melhor_por(lambda c: c.fo),
@@ -378,7 +426,8 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         d = r["rel"][c.lance]
         L.append(f"  {c.lance}: perda {d:.2f} pp ({faixa(d)}) | E {r['E'][c.lance]:.1f}% | "
                  f"{c.delta:.2f} peão")
-        L.append(f"     FO {c.fo:.2f}* FC {c.fc:.1f} Rob {c.robustez:.2f}* Assim {c.assimetria:.1f}"
+        conv = f" Conv {c.conversao:.1f}" if c.conversao is not None else ""
+        L.append(f"     FO {c.fo:.2f}* FC {c.fc:.1f} Rob {c.robustez:.2f}* Assim {c.assimetria:.1f}{conv}"
                  f" -> ATP {c.atp:.2f} -> U {r['U'][c.lance]:.2f}")
     L.append("     (* calculados a partir do núcleo estratégico)")
     L.append("")
@@ -395,6 +444,16 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
                               + (" (amostra pequena)" if c.n_lichess < 50 else ""))
             L.append(f"  {c.lance}: " + " | ".join(partes))
         L.append("")
+    if r["conversao_ativa"]:
+        L.append(f"EFICIÊNCIA DE CONVERSÃO: posição ganha (E ≥ {LIMIAR_GANHO:.0f}%) -> U recebe "
+                 f"{KAPPA_CONV} × (Conversão − 5): menos contrajogo, trocas e rei seguro pesam mais.")
+        L.append("")
+    elif r["ganhando"]:
+        L.append("Posição ganha, mas sem nota de Conversão em todos os lances (importe do motor).")
+        L.append("")
+    if r["frac_auto"] > 0:
+        L.append(f"Notas estimadas: {r['frac_auto']:.0%} -> ruído {r['sigma']:.1f} por nota, empate se "
+                 f"diferença de U < {r['tau']:.2f} (com notas suas: 0,55).")
     L.append("Dentro da MI: " + (", ".join(r["equivalentes"]) or "—"))
     L.append("Dominados (Pareto): " + (", ".join(r["dominados"]) or "nenhum"))
     L.append("MA (menor = melhor): " + ", ".join(f"{k} {v:.2f}" for k, v in r["ma"].items()))
@@ -412,7 +471,8 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         txt_m = f"vantagem de U {margem:+.2f}"
     L.append(f"  IFE: {nivel} ({conf}%, {txt_m})")
     if nivel == "D":
-        L.append("  -> lances equivalentes para as suas notas: jogue o de menor perda e poupe o relógio.")
+        L.append("  -> diferença dentro do ruído das notas: os empatados são equivalentes na prática;")
+        L.append("     não gaste relógio escolhendo entre eles.")
     if r["auditoria"]:
         L.append("")
         L.append("AUDITORIA (TOP — não vota)")
@@ -426,6 +486,10 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         if tf.get("fonte_p"):
             L.append(f"  Acerto estimado: {tf['fonte_p']}")
         L.append("")
+    filtros = [c for c in cands if c.filtro and c.filtro_ok]
+    if filtros:
+        L.append("Filtro de 6 itens: " + ", ".join(
+            c.lance + (" (auto)" if "filtro" in c.auto else "") for c in filtros) + " passaram.")
     L.append("Lembrete: TF (xeques -> capturas -> ameaças -> passados -> transformações ->")
     L.append("defesa ativa -> defesa direta) verificada até o fim antes de pontuar.")
     return "\n".join(L)
@@ -603,7 +667,37 @@ def _testes():
                   Candidato("Be3", 0.8, w=100, d=0, l=0, aval_cp=519, **notas(fc=10, assimetria=10))])
     assert r["modo"].startswith("avaliação") and r["rel"]["Be3"] > 2.5, r
 
-    # 8. Sugestões só preenchem o que falta
+    # 8. Notas auto alargam o empate e baixam o IFE
+    base = [Candidato("Rd1", 0.0, **notas(fc=9, atividade=8, estrutura=8, assimetria=7)),
+            Candidato("h3", 0.02, **notas(fc=6, assimetria=9))]
+    r1 = analisar(base, aval_melhor_cp=0)
+    for c in base:
+        c.auto = list(NOTAS)
+    r2 = analisar(base, aval_melhor_cp=0)
+    assert r2["tau"] > r1["tau"] and r2["ife"][2] < r1["ife"][2], (r1["ife"], r2["ife"])
+
+    # 9. Conversão só pesa quando ganhando
+    a = Candidato("Qxe7", 0.0, aval_cp=400, conversao=9, **notas())
+    b = Candidato("h4", 0.0, aval_cp=400, conversao=2, **notas(fc=7, assimetria=7))
+    r = analisar([a, b])
+    assert r["conversao_ativa"] and r["escolha"] == "Qxe7", r
+    a.aval_cp = b.aval_cp = 0
+    assert not analisar([a, b])["conversao_ativa"]
+
+    # 10. Filtro de 6 itens: um item falso elimina e diz qual
+    c = Candidato("Nxe5", 0.0, filtro={k: True for k in FILTRO_ITENS} | {"material": False}, **notas())
+    r = analisar([c, Candidato("d3", 0.0, **notas())], aval_melhor_cp=0)
+    assert any(l == "Nxe5" and "material" in m for l, m in r["eliminados"]), r["eliminados"]
+
+    # 11. Empate: lance fora da MI perde para os de dentro, mesmo com MA menor
+    n_auto = list(NOTAS)
+    ok1 = Candidato("O-O", 0.0, aval_cp=0, auto=n_auto, **notas(fc=6, assimetria=8, estrutura=8))
+    ok2 = Candidato("Bxh7+", 0.0, aval_cp=0, auto=n_auto, **notas(fc=5, assimetria=8.5, atividade=7))
+    fora = Candidato("Be3", 0.0, aval_cp=-14, auto=n_auto, **notas(fc=6, assimetria=8, estrutura=8, atividade=6))
+    r = analisar([ok1, ok2, fora])
+    assert "Be3" in r["empate"] and r["escolha"] != "Be3", r["motivo"]
+
+    # 12. Sugestões só preenchem o que falta
     c = aplicar_sugestoes(Candidato("exd5+"))
     assert c.reversibilidade == 3.0 and c.forcamento == 8.0 and c.fc is None
     return True

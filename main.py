@@ -25,7 +25,7 @@ from kivy.uix.slider import Slider
 from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 
-from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO,
+from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO, FILTRO_ITENS, FILTRO_ROTULOS,
                       RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro)
 import hed_fontes as F
 import hed_auto as A
@@ -168,7 +168,7 @@ class TelaEdicao(Screen):
         self.clear_widgets()
         self.sliders = {}
         self.original = c
-        self.definidos = {k for k in ESTRATEGICOS + DIRETOS if getattr(c, k) is not None}
+        self.definidos = {k for k in ESTRATEGICOS + DIRETOS + ["conversao"] if getattr(c, k) is not None}
         self.auto = set(c.auto)
         corpo = GridLayout(cols=1, spacing=dp(4), padding=dp(10))
 
@@ -179,11 +179,19 @@ class TelaEdicao(Screen):
         self.delta = campo(str(c.delta), "float")
         corpo.add_widget(self.delta)
 
-        lf = BoxLayout(size_hint_y=None, height=ALTURA)
-        self.filtro = CheckBox(active=c.filtro_ok, size_hint_x=None, width=ALTURA)
-        lf.add_widget(self.filtro)
-        lf.add_widget(rotulo("Passou no filtro obrigatório"))
-        corpo.add_widget(lf)
+        self.filtro_auto = "filtro" in c.auto
+        corpo.add_widget(Label(text="[b]Filtro obrigatório[/b]" + (" (auto)" if self.filtro_auto else ""),
+                               markup=True, size_hint_y=None, height=dp(36)))
+        self.filtros = {}
+        for k in FILTRO_ITENS:
+            lf = BoxLayout(size_hint_y=None, height=dp(40))
+            cb = CheckBox(active=c.filtro.get(k, c.filtro_ok) if c.filtro else c.filtro_ok,
+                          size_hint_x=None, width=dp(44))
+            cb.bind(active=lambda *_: self._mexeu_filtro())
+            self.filtros[k] = cb
+            lf.add_widget(cb)
+            lf.add_widget(rotulo(FILTRO_ROTULOS[k], font_size="14sp"))
+            corpo.add_widget(lf)
 
         corpo.add_widget(rotulo("WDL (%): W / D / L — se todos tiverem, usa pontuação esperada"))
         lw = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
@@ -204,6 +212,9 @@ class TelaEdicao(Screen):
         corpo.add_widget(Label(text="[b]Notas diretas[/b]", markup=True, size_hint_y=None, height=dp(36)))
         for k in DIRETOS:
             self._slider(corpo, k, getattr(c, k))
+        corpo.add_widget(Label(text="[b]Eficiência de Conversão[/b] (só pesa em posição ganha)", markup=True,
+                               size_hint_y=None, height=dp(36), font_size="14sp"))
+        self._slider(corpo, "conversao", c.conversao)
 
         self.resumo = Label(size_hint_y=None, height=dp(56), markup=True, halign="center", valign="middle")
         self.resumo.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
@@ -252,8 +263,13 @@ class TelaEdicao(Screen):
         o = self.original
         # perda editada à mão: a avaliação do motor deixa de valer para este lance
         aval = o.aval_cp if abs(delta - o.delta) < 1e-9 else None
-        return replace(o, lance=self.lance.text.strip() or "?", delta=delta, filtro_ok=self.filtro.active,
-                       w=w, d=d, l=l, aval_cp=aval, auto=[k for k in o.auto if k in self.auto], **notas)
+        filtro = {k: cb.active for k, cb in self.filtros.items()}
+        auto = [k for k in o.auto if k in self.auto or (k == "filtro" and self.filtro_auto)]
+        return replace(o, lance=self.lance.text.strip() or "?", delta=delta, filtro=filtro,
+                       filtro_ok=all(filtro.values()), w=w, d=d, l=l, aval_cp=aval, auto=auto, **notas)
+
+    def _mexeu_filtro(self):
+        self.filtro_auto = False
 
     def atualizar(self):
         if not hasattr(self, "resumo"):
@@ -546,9 +562,9 @@ class TelaTF(Screen):
         ajuda.bind(size=lambda w, s: setattr(w, "text_size", s))
         corpo.add_widget(ajuda)
         self.campos = {}
-        for chave, txt, padrao in (("tranq", "Depois do lance tranquilo:", "2.0"),
-                                   ("fim", "Fim da TF, se o cálculo estiver certo:", "4.0"),
-                                   ("falha", "Se o cálculo estiver errado:", "-2.0"),
+        for chave, txt, padrao in (("tranq", "Depois do lance tranquilo:", ""),
+                                   ("fim", "Fim da TF, se o cálculo estiver certo:", ""),
+                                   ("falha", "Se o cálculo estiver errado:", ""),
                                    ("p", "Sua confiança no cálculo (%):", "")):
             corpo.add_widget(rotulo(txt))
             t = campo(app.tf.get(chave, padrao))
@@ -579,9 +595,14 @@ class TelaTF(Screen):
         app = App.get_running_app()
         tf = app.tf_ultimo
         if not tf or tf.get("situacao") != "conflito" or tf.get("falha_cp") is None:
-            if not silencioso:
-                self.saida.text = seguro(tf["texto"] if tf else
-                                         "Sem análise do motor com TF. Analise uma posição (Tabuleiro ou FEN).")
+            if tf:
+                # a última análise não tem TF a medir: nada de números de exemplo na tela
+                for t in self.campos.values():
+                    t.text = ""
+                self.saida.text = seguro("Última análise: " + tf["texto"] +
+                                         "\n\nPara um cálculo manual, preencha as avaliações e toque em Calcular.")
+            elif not silencioso:
+                self.saida.text = "Sem análise do motor com TF. Analise uma posição (Tabuleiro ou FEN)."
             return
         for k, v in (("tranq", tf["tranq_cp"]), ("fim", tf["fim_cp"]), ("falha", tf["falha_cp"])):
             self.campos[k].text = f"{v / 100:.2f}"

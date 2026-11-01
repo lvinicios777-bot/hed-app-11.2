@@ -63,6 +63,32 @@ def _rei_rocado(b: chess.Board, cor: bool) -> Optional[int]:
     return None
 
 
+def tensao(b: chess.Board) -> int:
+    """Quantas peças (dos dois lados) estão atacadas pelo adversário: medida de complexidade."""
+    return sum(1 for sq, p in b.piece_map().items()
+               if p.piece_type != chess.KING and b.attackers(not p.color, sq))
+
+
+def perigo_rei(b: chess.Board, cor: bool) -> int:
+    """Casas vizinhas do rei de `cor` atacadas pelo adversário."""
+    k = b.king(cor)
+    if k is None:
+        return 0
+    return sum(1 for s in chess.SquareSet(chess.BB_KING_ATTACKS[k]) if b.is_attacked_by(not cor, s))
+
+
+def _peao_de_ala(b: chess.Board, m: chess.Move) -> bool:
+    """Avanço de uma casa de peão nas colunas a, b, g ou h, longe do próprio rei rocado: lance de espera."""
+    p = b.piece_at(m.from_square)
+    if not p or p.piece_type != chess.PAWN or b.is_capture(m):
+        return False
+    f = chess.square_file(m.from_square)
+    if f not in (0, 1, 6, 7) or abs(chess.square_rank(m.to_square) - chess.square_rank(m.from_square)) != 1:
+        return False
+    kf = _rei_rocado(b, b.turn)
+    return kf is None or abs(f - kf) > 1
+
+
 def eh_forcante(b: chess.Board, m: chess.Move) -> bool:
     """Xeque, captura ou ameaça direta a peça de valor maior ou indefesa."""
     if b.is_capture(m) or b.gives_check(m):
@@ -114,7 +140,7 @@ def estimar_notas(b: chess.Board, m: chess.Move, wdl: Optional[tuple] = None,
 
     # --- Baixo compromisso (nota alta = revela/fixa pouco)
     if peao:
-        bc = 3
+        bc = 6 if _peao_de_ala(b, m) else 3
     elif roque:
         bc = 4
     elif captura:
@@ -164,12 +190,13 @@ def estimar_notas(b: chess.Board, m: chess.Move, wdl: Optional[tuple] = None,
     est += 2 * roque
 
     # --- FC (clareza) e Assimetria: pelo WDL quando houver
+    tens = tensao(a)
     if wdl:
         w, d, l = (x / 10 for x in wdl)                 # ‰ -> %
         fc = 3 + 0.06 * d + 0.03 * w - 0.08 * l
         empate = d
-    else:
-        fc, empate = 6, None
+    else:                                               # sem WDL: clareza cai com a tensão
+        fc, empate = 8 - 0.6 * tens, None
     if forc >= 8:
         fc -= 1                                         # linha forçada exige cálculo
     desequilibrio = 0
@@ -183,6 +210,8 @@ def estimar_notas(b: chess.Board, m: chess.Move, wdl: Optional[tuple] = None,
     assim = 2 + desequilibrio + 2 * rocados_opostos + colunas_dif / 2
     if empate is not None:
         assim += (100 - empate) / 20
+    else:
+        assim += tens / 2                               # tensão = luta em aberto
 
     return {"forcamento": _lim(forc), "urgencia": _lim(urg), "valor_opcao": _lim(vo),
             "informacao": _lim(bc), "reversibilidade": _lim(rev), "eficiencia": _lim(efic),
@@ -207,6 +236,14 @@ def _forcantes_na_pv(b: chess.Board, pv_san: List[str]) -> int:
     return max(n, 1)
 
 
+def eh_tf(b: chess.Board, o) -> bool:
+    """TF de verdade: xeque ou captura, ou sequência com 2+ lances forçantes nossos."""
+    m = chess.Move.from_uci(o.uci)
+    if b.is_capture(m) or b.gives_check(m):
+        return True
+    return eh_forcante(b, m) and _forcantes_na_pv(b, o.pv) >= 2
+
+
 def tf_auto(b: chess.Board, opcoes: list, motor=None, tempo: float = 2.0,
             p_registro: Optional[float] = None) -> Optional[Dict]:
     """Compara o melhor lance forçante (TF) com o melhor lance tranquilo, ambos pelo motor.
@@ -220,7 +257,7 @@ def tf_auto(b: chess.Board, opcoes: list, motor=None, tempo: float = 2.0,
     com_aval = [o for o in opcoes if o.cp is not None]
     if len(com_aval) < 2:
         return None
-    forc = [o for o in com_aval if eh_forcante(b, chess.Move.from_uci(o.uci))]
+    forc = [o for o in com_aval if eh_tf(b, o)]
     tranq = [o for o in com_aval if o not in forc]
     if not forc or not tranq:
         return {"situacao": "sem conflito",
@@ -278,6 +315,57 @@ def tf_auto(b: chess.Board, opcoes: list, motor=None, tempo: float = 2.0,
     return r
 
 
+def conversao(b: chess.Board, m: chess.Move) -> float:
+    """Eficiência de Conversão 0–10: converte a vantagem com pouco risco?
+
+    Sobe com trocas (simplificar quando à frente), poucas respostas do adversário e rei seguro;
+    cai com xeques e capturas disponíveis para ele (contrajogo) e com peças nossas penduradas.
+    """
+    nos = b.turn
+    a = b.copy(stack=False)
+    a.push(m)
+    xeques = sum(1 for r in a.legal_moves if a.gives_check(r))
+    capturas_boas = pendurados(a, nos)
+    trocas = 1 if b.is_capture(m) and pendurados(a, nos) == 0 else 0
+    respostas = a.legal_moves.count()
+    conv = (6 - 1.0 * min(xeques, 3) - 0.8 * min(capturas_boas, 3) + 1.5 * trocas
+            - 0.5 * perigo_rei(a, nos) + (1 if respostas <= 5 else 0))
+    return _lim(conv)
+
+
+def filtro_auto(b: chess.Board, o, perda_peoes: Optional[float]) -> Optional[Dict[str, bool]]:
+    """Os 6 itens do filtro obrigatório conferidos pela posição e pelo motor.
+
+    Sem avaliação do motor (perda desconhecida) devolve None: o filtro fica manual.
+    Um item só reprova quando a posição mostra o problema E o motor confirma o custo (> 0,5 peão).
+    """
+    m = chess.Move.from_uci(o.uci)
+    if m not in b.legal_moves:
+        return {"legalidade": False, "tatica": True, "material": True, "reis": True,
+                "ameacas": True, "recursos": True}
+    if perda_peoes is None:
+        return None
+    nos = b.turn
+    a = b.copy(stack=False)
+    a.push(m)
+    caro = perda_peoes > 0.5
+    resposta_forcante = False
+    if len(o.pv) >= 2:
+        try:
+            r = a.parse_san(o.pv[1])
+            resposta_forcante = a.is_capture(r) or a.gives_check(r)
+        except ValueError:
+            pass
+    return {
+        "legalidade": True,
+        "tatica": perda_peoes <= 1.0,
+        "material": not (pendurados(a, nos) >= 2 and caro),
+        "reis": not (perigo_rei(a, nos) >= 3 and caro),
+        "ameacas": not (pendurados(b, nos) > 0 and pendurados(a, nos) >= pendurados(b, nos) and caro),
+        "recursos": not (resposta_forcante and caro),
+    }
+
+
 def taxa_acerto_tf(registro: List[Dict], minimo: int = 5) -> Optional[float]:
     """Taxa real de acerto em linhas forçadas, quando o Registro tiver ao menos `minimo` casos."""
     casos = [r["tf_acertou"] for r in registro if r.get("tf_acertou") is not None]
@@ -293,6 +381,21 @@ def _testes():
                       "eficiencia", "atividade", "estrutura", "fc", "assimetria"}
     assert all(0 <= v <= 10 for v in n.values())
     assert n["reversibilidade"] == 3 and eh_forcante(b, b.parse_san("a6"))      # ataca o Bb5
+    assert n["informacao"] == 6                                                  # peão de ala: flexível
+    assert estimar_notas(b, b.parse_san("d5"))["informacao"] == 3               # peão central: compromisso
+    # sem WDL, FC e Assimetria variam com a posição (não ficam fixas)
+    sem = [estimar_notas(b, b.parse_san(x)) for x in ("Nf6", "a6", "Bc5", "Nd4")]
+    assert len({(x["fc"], x["assimetria"]) for x in sem}) > 1, sem
+    # a6 ameaça, mas não é TF (não é xeque/captura nem sequência forçada)
+    assert not eh_tf(b, Opcao("a7a6", "a6", cp=-35, pv=["a6", "Ba4", "Nf6"]))
+    # Conversão e filtro
+    assert 0 <= conversao(b, b.parse_san("Nf6")) <= 10
+    f = filtro_auto(b, Opcao("g8f6", "Nf6", cp=-26, pv=["Nf6", "O-O"]), 0.0)
+    assert f and all(f.values())
+    assert filtro_auto(b, Opcao("g8f6", "Nf6", cp=-26, pv=["Nf6"]), None) is None
+    pend = chess.Board("4k3/8/8/3q4/8/8/3Q4/4K3 b - - 0 1")                      # dama preta atacada
+    f = filtro_auto(pend, Opcao("e8e7", "Ke7", cp=-900, pv=["Ke7", "Qxd5"]), 9.0)
+    assert not f["tatica"] and not f["ameacas"] and not f["recursos"], f
     assert not eh_forcante(b, b.parse_san("Nf6"))
     # TF sem motor: mede o conflito, mas não o custo de errar
     b2 = chess.Board("r1bq1rk1/pppn1ppp/4p3/3pP3/1b1P4/2NB1N2/PPP2PPP/R1BQK2R w KQ - 0 8")
