@@ -175,6 +175,13 @@ class TelaEdicao(Screen):
         corpo.add_widget(rotulo("Lance (ex.: e5, Rd1):"))
         self.lance = campo(c.lance)
         corpo.add_widget(self.lance)
+        if c.analise:
+            from hed_plano import texto as texto_analise
+            info = Label(text=seguro("[b]Continuação[/b]\n" + texto_analise(c.analise)), markup=True,
+                         size_hint_y=None, halign="left", valign="top", font_size="13sp")
+            info.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+                      texture_size=lambda w, t: setattr(w, "height", t[1] + dp(10)))
+            corpo.add_widget(info)
         corpo.add_widget(rotulo("Perda vs melhor lance do motor (peões):"))
         self.delta = campo(str(c.delta), "float")
         corpo.add_widget(self.delta)

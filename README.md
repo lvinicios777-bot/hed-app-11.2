@@ -9,6 +9,7 @@ Versão 11.1.2: 11.1 + 11.1.1 + medição da 11.2, com regras de decisão fechad
 |---|---|
 | 'hed_core.py' | Núcleo: filtro, pontuação esperada, MI/λ/teto, Pareto, U, τ, MA, IFE, TOP (auditoria), TF × Conversão, registro e PR/CC/AC/RP |
 | 'hed_auto.py' | Notas estimadas pela posição e TF × Conversão automática pelo motor |
+| 'hed_plano.py' | Análise da continuação: estrutura, peças, espaço e planos no fim da linha |
 | 'main.py' | Interface Android (Kivy) |
 | 'buildozer.spec' | Configuração do APK |
 | '.github/workflows/android.yml' | Gera o APK no GitHub Actions |
@@ -67,6 +68,17 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **Notas:** as 10 notas vêm estimadas pela posição e pelo WDL (`hed_auto.py`) e aparecem como "(auto)" na edição. Tocar ou arrastar confirma/ajusta e tira a marca. FC e Assimetria são as estimativas mais fracas: ajuste-as.
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
+
+## Novidades da 11.1.2.4 — análise da continuação
+
+Antes da nota final, cada lance importado do motor é seguido até o fim da linha principal (`hed_plano.py`):
+
+- **Estrutura que fica:** isolados, dobrados, passados, ilhas, maiorias, colunas abertas; diz se a estrutura melhora, mantém ou piora.
+- **Peças:** qualidade de cada peça (mobilidade segura, centralização, posto avançado, torre em coluna aberta/7ª, bispo ruim), melhor e pior peça, e se a pior peça melhorou.
+- **Espaço:** casas centrais seguras no próprio campo, nós × adversário.
+- **Planos:** regras de estruturas típicas (peão passado, IQP, maiorias, ataque das minorias, roques opostos, colunas, peão fraco, espaço, pior peça).
+- Isso ajusta (50/50 com o lance imediato) Estrutura, Atividade, Valor de opção, Eficiência e Assimetria, e aparece no relatório e na edição.
+- O IFE passa a ser medido contra o melhor rival admitido (não só os não dominados).
 
 ## Novidades da 11.1.2.3
 

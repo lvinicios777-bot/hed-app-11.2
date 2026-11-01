@@ -115,6 +115,7 @@ class Candidato:
     auto: List[str] = field(default_factory=list)   # notas estimadas pelo app (não ajustadas)
     filtro: Dict[str, bool] = field(default_factory=dict)   # 6 itens do filtro obrigatório
     conversao: Optional[float] = None    # Eficiência de Conversão 0–10 (só pesa quando ganhando)
+    analise: Dict = field(default_factory=dict)   # continuação: linha, estrutura, peças, espaço, planos
 
     def falhas_filtro(self) -> List[str]:
         return [k for k in FILTRO_ITENS if self.filtro.get(k) is False]
@@ -355,7 +356,8 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     res["empate"] = [c.lance for c in empatados] if len(empatados) > 1 else []
 
     # 6. IFE: probabilidade de a ordem 1º > 2º não ser ruído das notas
-    outros = [U[c.lance] for c in nao_dom if c is not escolha]
+    # contra o melhor rival admitido (inclusive dominados: a dominância vem de notas com ruído)
+    outros = [U[c.lance] for c in admit if c is not escolha]
     margem = U[escolha.lance] - max(outros) if outros else None
     conf = 100.0 if margem is None else 100.0 * _phi(max(margem, 0.0) / tau)
     res["ife"] = (_nivel_ife(conf), None if margem is None else round(margem, 2), round(conf))
@@ -429,7 +431,14 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         conv = f" Conv {c.conversao:.1f}" if c.conversao is not None else ""
         L.append(f"     FO {c.fo:.2f}* FC {c.fc:.1f} Rob {c.robustez:.2f}* Assim {c.assimetria:.1f}{conv}"
                  f" -> ATP {c.atp:.2f} -> U {r['U'][c.lance]:.2f}")
-    L.append("     (* calculados a partir do núcleo estratégico)")
+        a = c.analise
+        if a:
+            L.append(f"     Linha: {a['linha']}")
+            L.append(f"     Estrutura: {a['estrutura']}")
+            L.append(f"     Peças: {a['pecas']}")
+            L.append(f"     Espaço (casas seguras): {a['espaco']}")
+            L.append("     Planos: " + ("; ".join(a["planos"]) if a["planos"] else "sem plano estrutural claro"))
+    L.append("     (* calculados a partir do núcleo estratégico; notas 'auto' já consideram a continuação)")
     L.append("")
     ev = [c for c in r["ativos"] if c.n_masters or c.n_lichess]
     if ev:

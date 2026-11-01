@@ -565,7 +565,13 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
         try:
             from hed_auto import estimar_notas, conversao, filtro_auto
             m = chess.Move.from_uci(o.uci)
-            for k, v in estimar_notas(board, m, o.wdl, o.mate).items():
+            notas = estimar_notas(board, m, o.wdl, o.mate)
+            if o.pv:
+                # olha o fim da linha do motor: estrutura, peças, espaço e planos ajustam as notas
+                from hed_plano import analise_continuacao, ajustar_notas
+                c.analise = analise_continuacao(board, o.pv)
+                notas = ajustar_notas(notas, c.analise)
+            for k, v in notas.items():
                 setattr(c, k, v)
                 c.auto.append(k)
             c.conversao = conversao(board, m)
