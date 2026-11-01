@@ -144,17 +144,37 @@ jobs:
       - name: Conferir Stockfish e Lc0 dentro do APK
         run: unzip -l bin/*.apk | grep -E "libstockfish.so|liblc0.so"; unzip -l bin/*.apk | grep -q liblc0.so
 
+      - name: Assinar o APK com a chave fixa
+        run: |
+          # o Gradle assina com uma chave "Android Debug" própria, recriada a cada build;
+          # reassinamos com a chave fixa (cache) para o Android aceitar atualizar por cima
+          ASSINA=$(ls /usr/local/lib/android/sdk/build-tools/*/apksigner ~/.buildozer/android/platform/android-sdk/build-tools/*/apksigner 2>/dev/null | tail -1)
+          echo "apksigner: $ASSINA"
+          [ -n "$ASSINA" ] || { echo "::error::apksigner não encontrado"; exit 1; }
+          for f in bin/*.apk; do
+            "$ASSINA" sign --ks ~/.android/debug.keystore --ks-pass pass:android --key-pass pass:android \
+              --ks-key-alias androiddebugkey "$f"
+          done
+
       - name: Conferir a assinatura do APK gerado
         run: |
           ASSINA=$(ls /usr/local/lib/android/sdk/build-tools/*/apksigner ~/.buildozer/android/platform/android-sdk/build-tools/*/apksigner 2>/dev/null | tail -1)
-          echo "apksigner: $ASSINA"
-          atual=$("$ASSINA" verify --print-certs bin/*.apk | grep -m1 "SHA-256 digest" | awk '{print $NF}' | tr 'A-F' 'a-f')
-          esperado=$(tr -d ' :\n' < assinatura.sha256 | tr 'A-F' 'a-f')
-          echo "APK: $atual"
-          echo "esperado: $esperado"
-          if [ "$atual" != "$esperado" ]; then
-            echo "::error::O APK foi assinado com outra chave: não instalaria por cima da versão anterior."
+          apk=$("$ASSINA" verify --print-certs bin/*.apk | grep -m1 "SHA-256 digest" | awk '{print $NF}' | tr 'A-F' 'a-f')
+          chave=$(keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey \
+            | grep -m1 "SHA256:" | awk '{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "APK:   $apk"
+          echo "chave: $chave"
+          "$ASSINA" verify --print-certs bin/*.apk | grep -m1 "certificate DN"
+          if [ "$apk" != "$chave" ]; then
+            echo "::error::O APK não está assinado com a chave fixa."
             exit 1
+          fi
+          if [ -f assinatura.sha256 ]; then
+            esperado=$(tr -d ' :\n' < assinatura.sha256 | tr 'A-F' 'a-f')
+            if [ "$apk" != "$esperado" ]; then
+              echo "::error::A chave fixa mudou (cache perdido): o APK não instalaria por cima."
+              exit 1
+            fi
           fi
 
       - name: Mostrar erro (se falhar)
