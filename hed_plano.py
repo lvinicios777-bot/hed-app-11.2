@@ -33,17 +33,29 @@ def _rel(rank: int, cor: bool) -> int:
 
 
 # ======================================================== posição no fim da linha
-def fim_da_linha(b: chess.Board, pv_san: List[str], max_lances: int = 8) -> (chess.Board, List[str]):
-    c = b.copy(stack=False)
-    jogados = []
+def fim_da_linha(b: chess.Board, pv_san: List[str], max_lances: int = 8,
+                 ucis: Optional[List[str]] = None) -> (chess.Board, List[str]):
+    c = b.copy()
+    jogados, capturas = [], []
     for san in pv_san[:max_lances]:
         try:
-            c.push_san(san)
+            m = c.parse_san(san)
         except ValueError:
             break
+        capturas.append(c.is_capture(m))
+        if ucis is not None:
+            ucis.append(m.uci())
+        c.push(m)
         jogados.append(san)
         if c.is_game_over():
             break
+    # não parar no meio de uma troca: volta até a última posição tranquila
+    while len(jogados) > 1 and capturas[-1] and not c.is_game_over():
+        c.pop()
+        jogados.pop()
+        capturas.pop()
+        if ucis is not None:
+            ucis.pop()
     return c, jogados
 
 
@@ -77,16 +89,55 @@ def estrutura(b: chess.Board, cor: bool) -> Dict:
                                                      b.pieces(chess.PAWN, chess.BLACK)) & chess.BB_FILES[f]]
     semi = [COLUNAS[f] for f in range(8) if not nossos & chess.BB_FILES[f] and deles & chess.BB_FILES[f]]
     iqp = (len(isolados) >= 1 and any(chess.square_file(s) == 3 for s in isolados))
+    dob_info = []
+    for f in sorted(colset):
+        if col.count(f) > 1:
+            dob_info.append({"coluna": COLUNAS[f],
+                             "isolado": (f - 1) not in colset and (f + 1) not in colset})
     return {"isolados": [chess.square_name(s) for s in isolados], "dobrados": dobrados,
             "passados": [chess.square_name(s) for s in passados], "ilhas": ilhas,
             "maioria_dama": dama - dama_d, "maioria_rei": rei - rei_d,
-            "abertas": abertas, "semiabertas": semi, "iqp": iqp, "n": len(nossos)}
+            "abertas": abertas, "semiabertas": semi, "iqp": iqp, "n": len(nossos),
+            "dobrados_info": dob_info}
 
 
-def nota_estrutura(e: Dict) -> float:
-    """Saúde da estrutura de um lado (maior = melhor)."""
-    return (6 - 1.0 * len(e["isolados"]) - 0.8 * e["dobrados"] - 0.5 * max(0, e["ilhas"] - 2)
-            + 1.0 * len(e["passados"]))
+def compensacoes(b: chess.Board, cor: bool, e: Dict) -> List[str]:
+    """O que compensa peões dobrados ou isolados nesta posição."""
+    comp = []
+    if e["dobrados_info"]:
+        if len(b.pieces(chess.BISHOP, cor)) == 2 and len(b.pieces(chess.BISHOP, not cor)) < 2:
+            comp.append("par de bispos")
+        semi = set(e["semiabertas"]) | set(e["abertas"])
+        for d in e["dobrados_info"]:
+            f = COLUNAS.index(d["coluna"])
+            viz = [COLUNAS[x] for x in (f - 1, f + 1) if 0 <= x < 8 and COLUNAS[x] in semi]
+            if viz:
+                comp.append(f"coluna {viz[0]} semiaberta")
+                break
+        centro = (chess.D4, chess.E4, chess.D5, chess.E5)
+        if any(any(c in b.attacks(p) for c in centro) for p in b.pieces(chess.PAWN, cor)
+               if COLUNAS[chess.square_file(p)] in [d["coluna"] for d in e["dobrados_info"]]):
+            comp.append("controle do centro")
+    if e["iqp"] and b.pieces(chess.QUEEN, chess.WHITE) and b.pieces(chess.QUEEN, chess.BLACK):
+        comp.append("IQP dinâmico (damas no tabuleiro)")
+    return list(dict.fromkeys(comp))
+
+
+def nota_estrutura(e: Dict, comp: Optional[List[str]] = None) -> float:
+    """Saúde da estrutura de um lado (maior = melhor), em contexto.
+
+    Dobrado e isolado é fraqueza real (−0,8); dobrado com vizinhos pesa menos (−0,4), e cada
+    compensação (par de bispos, coluna semiaberta, centro) desconta 0,3 dessa penalidade.
+    O IQP com damas no tabuleiro pesa metade (é dinâmico).
+    """
+    comp = comp or []
+    pen_dob = sum(0.8 if d["isolado"] else 0.4 for d in e["dobrados_info"])
+    alivio = 0.3 * len([c for c in comp if not c.startswith("IQP")])
+    pen_dob = max(0.0, pen_dob - alivio) if e["dobrados_info"] else 0.0
+    pen_iso = 0.0
+    for s in e["isolados"]:
+        pen_iso += 0.5 if (e["iqp"] and s[0] == "d" and any(c.startswith("IQP") for c in comp)) else 1.0
+    return 6 - pen_iso - pen_dob - 0.5 * max(0, e["ilhas"] - 2) + 1.0 * len(e["passados"])
 
 
 # ======================================================== peças
@@ -149,6 +200,69 @@ def pecas(b: chess.Board, cor: bool) -> Dict:
     lista.sort()
     return {"media": sum(q for q, _ in lista) / len(lista), "pior": lista[0][1], "pior_q": lista[0][0],
             "melhor": lista[-1][1]}
+
+
+def rota_ideal(b: chess.Board, sq: int) -> Optional[Dict]:
+    """Melhor casa alcançável pela peça em até 2 lances (sem considerar respostas): a 'posição ideal'."""
+    p = b.piece_at(sq)
+    if not p:
+        return None
+    cor = p.color
+    base = b.copy(stack=False)
+    base.turn = cor
+    base.ep_square = None
+    atual = qualidade_peca(base, sq)
+    um, dois = (atual, []), (atual, [])
+    for m1 in [m for m in base.legal_moves if m.from_square == sq and not base.is_capture(m)]:
+        b1 = base.copy(stack=False)
+        b1.push(m1)
+        b1.turn = cor
+        if b1.is_attacked_by(not cor, m1.to_square):
+            continue                                     # não dá para parar (nem passar) numa casa atacada
+        q1 = qualidade_peca(b1, m1.to_square)
+        if q1 > um[0]:
+            um = (q1, [m1.to_square])
+        for m2 in [m for m in b1.legal_moves if m.from_square == m1.to_square and not b1.is_capture(m)]:
+            if m2.to_square == sq:
+                continue
+            b2 = b1.copy(stack=False)
+            b2.push(m2)
+            b2.turn = cor
+            if b2.is_attacked_by(not cor, m2.to_square):
+                continue
+            q2 = qualidade_peca(b2, m2.to_square)
+            if q2 > dois[0]:
+                dois = (q2, [m1.to_square, m2.to_square])
+    # caminho mais curto, salvo se o de 2 lances for claramente melhor
+    if dois[1] and dois[0] > um[0] + 0.6:
+        melhor = dois
+    elif um[1] and um[0] > atual + 0.3:
+        melhor = um
+    else:
+        return None
+    melhor = (melhor[0], None, melhor[1])
+    nome = f"{NOMES[p.piece_type]}{chess.square_name(sq)}"
+    caminho = "–".join(chess.square_name(x) for x in [sq] + melhor[2])
+    return {"peca": nome, "caminho": caminho, "de": round(atual, 1), "para": round(melhor[0], 1)}
+
+
+def rupturas(b: chess.Board, cor: bool) -> List[str]:
+    """Avanços de peão que entram em contato com peões adversários (abrem o jogo)."""
+    c = b.copy(stack=False)
+    c.turn = cor
+    c.ep_square = None
+    out = []
+    for m in c.legal_moves:
+        p = c.piece_at(m.from_square)
+        if not p or p.piece_type != chess.PAWN or c.is_capture(m):
+            continue
+        d = c.copy(stack=False)
+        d.push(m)
+        alvo = [x for x in d.attacks(m.to_square)
+                if d.piece_at(x) == chess.Piece(chess.PAWN, not cor)]
+        if alvo and not d.is_attacked_by(not cor, m.to_square) or (alvo and d.attackers(cor, m.to_square)):
+            out.append(chess.square_name(m.to_square))
+    return out[:3]
 
 
 # ======================================================== espaço
@@ -226,15 +340,23 @@ def planos(b: chess.Board, cor: bool) -> List[str]:
 # ======================================================== análise completa de um candidato
 def analise_continuacao(b: chess.Board, pv_san: List[str]) -> Dict:
     nos = b.turn
-    fim, linha = fim_da_linha(b, pv_san)
+    ucis: List[str] = []
+    fim, linha = fim_da_linha(b, pv_san, ucis=ucis)
     e0, e1 = estrutura(b, nos), estrutura(fim, nos)
     d1 = estrutura(fim, not nos)
     p0, p1, q1 = pecas(b, nos), pecas(fim, nos), pecas(fim, not nos)
     s1, s1d = espaco(fim, nos), espaco(fim, not nos)
     pl = planos(fim, nos)
+    VAL = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
 
-    saldo_estrutura = nota_estrutura(e1) - nota_estrutura(d1)
-    mudou_estrutura = nota_estrutura(e1) - nota_estrutura(e0)
+    def material(x):
+        return sum(VAL[t] * (len(x.pieces(t, nos)) - len(x.pieces(t, not nos))) for t in VAL)
+    dif_material = material(fim) - material(b)
+
+    comp1, comp_d = compensacoes(fim, nos, e1), compensacoes(fim, not nos, d1)
+    comp0 = compensacoes(b, nos, e0)
+    saldo_estrutura = nota_estrutura(e1, comp1) - nota_estrutura(d1, comp_d)
+    mudou_estrutura = nota_estrutura(e1, comp1) - nota_estrutura(e0, comp0)
     melhorou_pior = (p0["pior_q"] is not None and p1["pior_q"] is not None
                      and p1["pior_q"] > p0["pior_q"] + 0.5)
 
@@ -242,7 +364,15 @@ def analise_continuacao(b: chess.Board, pv_san: List[str]) -> Dict:
     if e1["isolados"]:
         txt_est.append("isolado " + ",".join(e1["isolados"]))
     if e1["dobrados"]:
-        txt_est.append(f"{e1['dobrados']} dobrado(s)")
+        cols = ",".join(d["coluna"] for d in e1["dobrados_info"])
+        if comp1 and not any(d["isolado"] for d in e1["dobrados_info"]):
+            txt_est.append(f"dobrados na coluna {cols} — aceitável: {', '.join(comp1)}")
+        elif comp1:
+            txt_est.append(f"dobrados e isolados na coluna {cols} — fraqueza, em parte compensada: {', '.join(comp1)}")
+        else:
+            txt_est.append(f"dobrados na coluna {cols} — fraqueza sem compensação")
+    elif comp1:
+        txt_est.append("compensação: " + ", ".join(comp1))
     if e1["passados"]:
         txt_est.append("passado " + ",".join(e1["passados"]))
     if d1["isolados"] or d1["dobrados"]:
@@ -250,6 +380,46 @@ def analise_continuacao(b: chess.Board, pv_san: List[str]) -> Dict:
             (["isolado " + ",".join(d1["isolados"])] if d1["isolados"] else [])
             + ([f"{d1['dobrados']} dobrado(s)"] if d1["dobrados"] else [])))
     veredito = ("melhora" if mudou_estrutura > 0.4 else "piora" if mudou_estrutura < -0.4 else "mantém")
+
+    # posição ideal das duas piores peças e rupturas de peão
+    lista = sorted(((qualidade_peca(fim, s), s) for t in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                    for s in fim.pieces(t, nos)))
+    rotas = [r for r in (rota_ideal(fim, s) for _, s in lista[:2]) if r]
+    rup = rupturas(fim, nos)
+
+    # balanço: o que se ganha e o que se cede com este lance
+    pro, contra = [], []
+    if dif_material >= 1:
+        pro.append(f"ganha material (+{dif_material})")
+    elif dif_material <= -1:
+        contra.append(f"cede material ({dif_material}) — verificar a compensação")
+    if saldo_estrutura > 0.4:
+        pro.append("estrutura melhor que a do adversário")
+    elif saldo_estrutura < -0.4:
+        contra.append("estrutura pior que a do adversário")
+    if s1 - s1d >= 3:
+        pro.append(f"mais espaço ({s1} × {s1d})")
+    elif s1d - s1 >= 3:
+        contra.append(f"menos espaço ({s1} × {s1d})")
+    if p1["media"] - q1["media"] >= 0.4:
+        pro.append("peças mais ativas")
+    elif q1["media"] - p1["media"] >= 0.4:
+        contra.append("peças menos ativas")
+    if e1["passados"]:
+        pro.append("peão passado " + ",".join(e1["passados"]))
+    if d1["passados"]:
+        contra.append("passado adversário " + ",".join(d1["passados"]))
+    for d in e1["dobrados_info"]:
+        if not (comp1 and not d["isolado"]):            # dobrado aceitável é neutro
+            contra.append(f"dobrados na coluna {d['coluna']}" + (" e isolados" if d["isolado"] else ""))
+    if comp1:
+        pro += [c for c in comp1 if c not in pro]
+    if pl:
+        pro.append(f"{len(pl)} plano(s) claro(s)")
+    else:
+        contra.append("sem plano estrutural claro")
+    compensa = len(pro) - len(contra)
+    resumo = ("compensa" if compensa >= 2 else "equilibrado" if compensa >= 0 else "não compensa")
     return {
         "linha": " ".join(linha),
         "estrutura": (", ".join(txt_est) or "sem fraquezas de peões") + f" (estrutura {veredito})",
@@ -261,6 +431,11 @@ def analise_continuacao(b: chess.Board, pv_san: List[str]) -> Dict:
         "espaco": f"{s1} × {s1d}",
         "saldo_espaco": s1 - s1d,
         "planos": pl,
+        "material": dif_material,
+        "rotas": [f"{r['peca']}: {r['caminho']} (qualidade {r['de']} → {r['para']})" for r in rotas],
+        "rupturas": rup,
+        "pro": pro, "contra": contra, "balanco": resumo,
+        "linha_uci": ucis,
         "desequilibrio": int(bool(e1["passados"]) or bool(d1["passados"]) or e1["iqp"] or d1["iqp"]
                              or e1["maioria_dama"] != 0),
     }
@@ -288,6 +463,28 @@ def texto(a: Dict) -> str:
     return "\n".join(L)
 
 
+def texto_planos(lance: str, a: Dict) -> str:
+    """Ficha completa para a tela Planos."""
+    L = [f"{lance} — {a.get('balanco', '').upper()}", f"Linha: {a['linha']}", ""]
+    L.append("A FAVOR")
+    L += [f"  + {x}" for x in a.get("pro", [])] or ["  —"]
+    L.append("CONTRA")
+    L += [f"  - {x}" for x in a.get("contra", [])] or ["  —"]
+    L.append("")
+    L.append(f"Estrutura: {a['estrutura']}")
+    L.append(f"Espaço (casas seguras): {a['espaco']}")
+    L.append(f"Peças: {a['pecas']}")
+    L.append("")
+    L.append("PLANOS")
+    L += [f"  {i}. {p}" for i, p in enumerate(a["planos"], 1)] or ["  sem plano estrutural claro"]
+    if a.get("rotas"):
+        L.append("CASA IDEAL DAS PIORES PEÇAS")
+        L += [f"  {r}" for r in a["rotas"]]
+    if a.get("rupturas"):
+        L.append("RUPTURAS DE PEÃO: " + ", ".join(a["rupturas"]))
+    return "\n".join(L)
+
+
 # ======================================================== testes
 def _testes():
     # IQP branco (estrutura típica): plano de ruptura e peão isolado detectados
@@ -309,10 +506,30 @@ def _testes():
     # torre em coluna aberta vale mais que fechada
     t = chess.Board("6k1/pp3ppp/8/8/8/8/PP3PPP/2R2RK1 w - - 0 1")
     assert qualidade_peca(t, chess.C1) > qualidade_peca(t, chess.F1)
+    # peão dobrado em contexto: Espanhola das Trocas (…dxc6) tem par de bispos e coluna d → aceitável
+    trocas = chess.Board("r1bqk1nr/1pp1bppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQ1RK1 w kq - 0 6")
+    e = estrutura(trocas, chess.BLACK)
+    comp = compensacoes(trocas, chess.BLACK, e)
+    assert "par de bispos" in comp and any("semiaberta" in c for c in comp), comp
+    sem = {**e, "dobrados_info": [{"coluna": "c", "isolado": False}]}
+    assert nota_estrutura(e, comp) > nota_estrutura(sem, [])
+    # dobrado e isolado pesa mais que dobrado com vizinhos
+    iso = {**e, "dobrados_info": [{"coluna": "c", "isolado": True}]}
+    assert nota_estrutura(iso, []) < nota_estrutura(sem, [])
+    # rota ideal: cavalo mal colocado encontra casa melhor
+    r = rota_ideal(chess.Board("6k1/pp3ppp/8/8/3P4/8/PP3PPP/N5K1 w - - 0 1"), chess.A1)
+    assert r and r["para"] > r["de"], r
+    iqp_fim = chess.Board("2rq1rk1/pb2bp1p/1pn1pnp1/8/3P4/P1NQ1N2/1PB2PPP/R1B1R1K1 w - - 0 14")
+    assert rota_ideal(iqp_fim, chess.C1)["caminho"] == "c1–f4"           # direto, sem desvio por h6
     # análise da continuação na Espanhola
     esp = chess.Board("r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3")
     a = analise_continuacao(esp, ["a6", "Ba4", "Nf6", "O-O", "Be7", "Re1"])
     assert a["linha"].startswith("a6 Ba4") and isinstance(a["planos"], list)
+    # linha que termina numa captura sem recaptura: a análise volta à posição tranquila
+    _, jog = fim_da_linha(esp, ["Nf6", "O-O", "Nxe4", "Re1", "Nd6", "Nxe5", "Be7", "Bf1", "Nxe5"])
+    assert jog[-1] == "Bf1", jog
+    assert a["linha_uci"][:2] == ["a7a6", "b5a4"] and a["balanco"] in ("compensa", "equilibrado", "não compensa")
+    assert "A FAVOR" in texto_planos("a6", a)
     n = ajustar_notas({"estrutura": 6, "atividade": 5, "valor_opcao": 7, "eficiencia": 4,
                        "assimetria": 3}, a)
     assert all(0 <= v <= 10 for v in n.values())

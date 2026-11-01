@@ -549,6 +549,52 @@ class TelaPosicao(Screen):
         app.ir("lista")
 
 
+# ---------------------------------------------------------------- Planos
+class TelaPlanos(Screen):
+    """Ficha de cada lance: a favor × contra, planos, casa ideal das peças, rupturas; linha no tabuleiro."""
+
+    def mostrar(self):
+        from hed_plano import texto_planos
+        app = App.get_running_app()
+        self.clear_widgets()
+        raiz = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
+        raiz.add_widget(titulo("Planos de cada lance"))
+        lista = GridLayout(cols=1, spacing=dp(10))
+        cands = [c for c in app.cands if c.analise]
+        if not cands:
+            lista.add_widget(rotulo("Importe lances do motor (Tabuleiro → Enviar ao HED) para ver os planos."))
+        for c in cands:
+            lb = Label(text=seguro(texto_planos(c.lance, c.analise)), size_hint_y=None, halign="left",
+                       valign="top", font_name="RobotoMono-Regular", font_size="13sp")
+            lb.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+                    texture_size=lambda w, t: setattr(w, "height", t[1] + dp(6)))
+            lista.add_widget(lb)
+            lista.add_widget(botao(f"Ver a linha de {c.lance} no tabuleiro", lambda c=c: self.ver_linha(c), AZUL))
+        raiz.add_widget(rolavel(lista))
+        acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8))
+        acoes.add_widget(botao("Voltar", app.mostrar_relatorio, CINZA))
+        if app.partida_backup:
+            acoes.add_widget(botao("Restaurar minha partida", self.restaurar, (0.7, 0.45, 0.15, 1)))
+        raiz.add_widget(acoes)
+        self.add_widget(raiz)
+
+    def ver_linha(self, c):
+        """Abre a linha no tabuleiro, logo após o lance candidato; > avança pela continuação."""
+        import copy
+        app = App.get_running_app()
+        if not app.partida_backup:
+            app.partida_backup = copy.deepcopy(app.partida)    # guarda a sua partida
+        app.partida = {"inicio": c.analise["fen"], "lances": list(c.analise.get("linha_uci", [])), "idx": 1}
+        app.salvar()
+        app.ir("analise")
+
+    def restaurar(self):
+        app = App.get_running_app()
+        app.partida, app.partida_backup = app.partida_backup, None
+        app.salvar()
+        app.ir("analise")
+
+
 # ---------------------------------------------------------------- TF × Conversão
 class TelaTF(Screen):
     """Regra de conflito da 11.1.2: a TF só vence o lance tranquilo se p > p*."""
@@ -711,6 +757,7 @@ class HEDApp(App):
         self.aval_melhor, self.mi_pp, self.indice = None, MI_PP, None
         self.tf = {}
         self.tf_ultimo = None
+        self.partida_backup = None
         self.ultimo, self.ultima_estrutura = None, ""
         self.cfg, self.fen = dict(F.CFG_PADRAO), ""
         self.partida = {"inicio": FEN_INICIAL, "lances": [], "idx": 0}
@@ -720,7 +767,7 @@ class HEDApp(App):
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
                           ("registrar", TelaRegistrar), ("registro", TelaRegistro),
                           ("posicao", TelaPosicao), ("config", TelaConfig), ("analise", TelaAnalise),
-                          ("tf", TelaTF)):
+                          ("tf", TelaTF), ("planos", TelaPlanos)):
             self.sm.add_widget(cls(name=nome))
         self.sm.current = "lista"
         return self.sm
@@ -750,6 +797,7 @@ class HEDApp(App):
             self.mi_pp = dados.get("mi_pp", MI_PP)
             self.tf = dados.get("tf", {})
             self.tf_ultimo = dados.get("tf_ultimo")
+            self.partida_backup = dados.get("partida_backup")
             self.cands = [Candidato.de_dict(d) for d in dados.get("cands", [])]
             self.registro = dados.get("registro", [])
             self.ultima_estrutura = dados.get("ultima_estrutura", "")
@@ -762,7 +810,7 @@ class HEDApp(App):
     def salvar(self):
         try:
             with open(self.arquivo, "w", encoding="utf-8") as f:
-                json.dump({"aval_melhor": self.aval_melhor, "mi_pp": self.mi_pp, "tf": self.tf, "tf_ultimo": self.tf_ultimo,
+                json.dump({"aval_melhor": self.aval_melhor, "mi_pp": self.mi_pp, "tf": self.tf, "tf_ultimo": self.tf_ultimo, "partida_backup": self.partida_backup,
                            "cands": [c.para_dict() for c in self.cands],
                            "registro": self.registro, "ultima_estrutura": self.ultima_estrutura,
                            "cfg": self.cfg, "fen": self.fen, "partida": self.partida},
@@ -785,10 +833,16 @@ class HEDApp(App):
         r = analisar(self.cands, aval, self.mi_pp)
         self.ultimo = r if "escolha" in r else None
         botoes = [("Voltar", lambda: self.ir("lista"), CINZA)]
+        if any(c.analise for c in self.cands):
+            botoes.append(("Planos", self.mostrar_planos, AZUL))
         if self.ultimo:
             botoes.append(("Registrar", self.abrir_registrar, VERDE))
         self.sm.get_screen("texto").mostrar(relatorio(self.cands, aval, self.mi_pp, self.tf_ultimo), botoes)
         self.ir("texto")
+
+    def mostrar_planos(self):
+        self.sm.get_screen("planos").mostrar()
+        self.ir("planos")
 
     def abrir_registrar(self):
         self.sm.get_screen("registrar").carregar()

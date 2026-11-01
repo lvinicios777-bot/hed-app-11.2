@@ -438,6 +438,9 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
             L.append(f"     Peças: {a['pecas']}")
             L.append(f"     Espaço (casas seguras): {a['espaco']}")
             L.append("     Planos: " + ("; ".join(a["planos"]) if a["planos"] else "sem plano estrutural claro"))
+            if a.get("balanco"):
+                L.append(f"     Balanço: {a['balanco']} ({len(a.get('pro', []))} a favor, "
+                         f"{len(a.get('contra', []))} contra) — detalhes na tela Planos")
     L.append("     (* calculados a partir do núcleo estratégico; notas 'auto' já consideram a continuação)")
     L.append("")
     ev = [c for c in r["ativos"] if c.n_masters or c.n_lichess]

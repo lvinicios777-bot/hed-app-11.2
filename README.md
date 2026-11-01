@@ -69,6 +69,13 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.5 — tela Planos e estrutura em contexto
+
+- **Tela Planos** (botão no relatório): para cada lance, A FAVOR × CONTRA, balanço (compensa / equilibrado / não compensa), estrutura, espaço, peças, planos numerados, casa ideal das duas piores peças (caminho em até 2 lances) e rupturas de peão.
+- **Ver a linha no tabuleiro:** abre a continuação logo após o lance (use > para avançar). A sua partida é guardada; "Restaurar minha partida" a traz de volta.
+- **Peão dobrado em contexto:** dobrado com vizinhos e com compensação (par de bispos, coluna semiaberta, controle do centro) é aceitável e neutro; dobrado e isolado é fraqueza. IQP com damas no tabuleiro conta como dinâmico.
+- **Material** ganho ou cedido entra no balanço; a análise para na última posição tranquila da linha (nunca no meio de uma troca).
+
 ## Novidades da 11.1.2.4 — análise da continuação
 
 Antes da nota final, cada lance importado do motor é seguido até o fim da linha principal (`hed_plano.py`):

@@ -570,6 +570,7 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
                 # olha o fim da linha do motor: estrutura, peças, espaço e planos ajustam as notas
                 from hed_plano import analise_continuacao, ajustar_notas
                 c.analise = analise_continuacao(board, o.pv)
+                c.analise["fen"] = board.fen()
                 notas = ajustar_notas(notas, c.analise)
             for k, v in notas.items():
                 setattr(c, k, v)
