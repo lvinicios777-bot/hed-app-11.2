@@ -8,9 +8,14 @@ Versão 11.1.2: 11.1 + 11.1.1 + medição da 11.2, com regras de decisão fechad
 | Arquivo | Função |
 |---|---|
 | 'hed_core.py' | Núcleo: filtro, pontuação esperada, MI/λ/teto, Pareto, U, τ, MA, IFE, TOP (auditoria), TF × Conversão, registro e PR/CC/AC/RP |
+| 'hed_auto.py' | Notas estimadas pela posição e TF × Conversão automática pelo motor |
 | 'main.py' | Interface Android (Kivy) |
 | 'buildozer.spec' | Configuração do APK |
 | '.github/workflows/android.yml' | Gera o APK no GitHub Actions |
+
+## Baixar o APK
+
+Link direto (sempre a versão mais nova, sem login): https://github.com/lvinicios777-bot/hed-app-11.2/releases/latest/download/hed.apk
 
 ## Gerar o APK pelo GitHub
 
@@ -54,6 +59,14 @@ A 11.1.2 unifica a 11.1, a 11.1.1 e a camada de medição da 11.2. O app segue a
 | IFE por faixas de margem | IFE = Φ(margem/σ) em letra e % |
 | — | Tela TF × Conversão (limiar p*) |
 | — | Saídas "Melhor WDL" e "Mais forçante"; sugestão de Reversibilidade/Forçamento pelo lance importado |
+
+## Automático (11.1.2.2)
+
+Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
+
+- **Notas:** as 10 notas vêm estimadas pela posição e pelo WDL (`hed_auto.py`) e aparecem como "(auto)" na edição. Tocar ou arrastar confirma/ajusta e tira a marca. FC e Assimetria são as estimativas mais fracas: ajuste-as.
+- **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
+- **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
 ## Fórmulas
 

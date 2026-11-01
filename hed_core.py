@@ -11,7 +11,7 @@ pontuação esperada, admissão pela MI com preço λ e teto, conflito TF × Con
 
 O motor não roda aqui: cada candidato traz a perda em peões e, se houver, WDL e/ou a avaliação.
 """
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 from datetime import date
 from math import erf, exp, sqrt
 from typing import List, Dict, Optional
@@ -98,6 +98,7 @@ class Candidato:
     pts_masters: Optional[float] = None
     n_lichess: Optional[int] = None
     pts_lichess: Optional[float] = None
+    auto: List[str] = field(default_factory=list)   # notas estimadas pelo app (não ajustadas)
 
     # ---- notas
     def faltando(self) -> List[str]:
@@ -228,10 +229,19 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         return res
 
     # 2. Pontuação esperada: WDL se todos têm; senão avaliação do motor; senão perda + aval. do melhor
+    tem_cp = all(c.aval_cp is not None for c in ativos)
+    wdl_saturado = False
     if all(c.escore is not None for c in ativos):
+        esc = [c.escore for c in ativos]
+        cps = [c.aval_cp for c in ativos] if tem_cp else []
+        # posição muito decidida: o WDL dá a mesma pontuação a lances que o motor separa
+        wdl_saturado = tem_cp and max(esc) - min(esc) < 0.5 and max(cps) - min(cps) >= 20
+    if all(c.escore is not None for c in ativos) and not wdl_saturado:
         modo = "WDL (E = W + D/2)"
         E = {c.lance: c.escore for c in ativos}
-    elif all(c.aval_cp is not None for c in ativos):
+    elif tem_cp:
+        if wdl_saturado:
+            res["avisos"].append("WDL saturado (mesma pontuação para todos): usada a avaliação do motor.")
         modo = "avaliação do motor (curva do Lichess)"
         E = {c.lance: pontuacao_cp(c.aval_cp) for c in ativos}
     else:
@@ -318,7 +328,7 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     def melhor_por(f, conj=admit):
         return max(conj, key=f).lance
 
-    saidas = {"Melhor objetivo": melhor_por(lambda c: -rel[c.lance])}
+    saidas = {"Melhor objetivo": melhor_por(lambda c: (-rel[c.lance], -c.delta))}
     if all(c.l is not None for c in admit):
         saidas["Melhor WDL (menos derrota)"] = melhor_por(lambda c: -c.l)
     saidas.update({
@@ -336,9 +346,13 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
 
 
 def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
-              mi_pp: float = MI_PP) -> str:
+              mi_pp: float = MI_PP, tf: Optional[Dict] = None) -> str:
     r = analisar(cands, aval_melhor_cp, mi_pp)
     L = [f"HED {VERSAO} — RELATÓRIO", ""]
+    n_auto = sum(1 for c in cands if c.filtro_ok and c.auto)
+    if n_auto:
+        r["avisos"].append(f"Notas estimadas automaticamente em {n_auto} lance(s) (marcadas 'auto' "
+                           "na edição): ajuste o que discordar, sobretudo FC e Assimetria.")
     for a in r["avisos"]:
         L.append(f"! {a}")
     if r["avisos"]:
@@ -404,6 +418,14 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         L.append("AUDITORIA (TOP — não vota)")
         L += [f"  {a}" for a in r["auditoria"]]
     L.append("")
+    if tf:
+        L.append("TF × CONVERSÃO (automático, pelo motor)")
+        L.append(f"  {tf['texto']}")
+        if tf.get("pv"):
+            L.append(f"  Linha da TF: {' '.join(tf['pv'])}")
+        if tf.get("fonte_p"):
+            L.append(f"  Acerto estimado: {tf['fonte_p']}")
+        L.append("")
     L.append("Lembrete: TF (xeques -> capturas -> ameaças -> passados -> transformações ->")
     L.append("defesa ativa -> defesa direta) verificada até o fim antes de pontuar.")
     return "\n".join(L)
@@ -523,6 +545,15 @@ def analise_registro(regs: List[Dict], minimo_rp: int = 5) -> str:
                      " -> rever pesos nesta estrutura")
         else:
             L.append(f"  {est}: sem padrão contra o HED -> manter pesos")
+    tfs = [r["tf_acertou"] for r in regs if r.get("tf_acertou") is not None]
+    L.append("")
+    L.append("TF — ACERTO EM LINHAS FORÇADAS")
+    if tfs:
+        L.append(f"  {sum(tfs)}/{len(tfs)} ({100 * sum(tfs) / len(tfs):.0f}%)"
+                 + (" -> já usado no lugar da estimativa provisória." if len(tfs) >= 5
+                    else f" -> com 5 casos passa a substituir a estimativa provisória."))
+    else:
+        L.append("  Sem casos ainda (marque ao registrar uma posição com TF).")
     total = len(com_res)
     L.append("")
     L.append(f"Calibração de λ e τ: {total}/30 posições com resultado"
@@ -567,7 +598,12 @@ def _testes():
     assert round(limiar_tf(200, 400, -200)["p_estrela"], 2) == 0.72
     assert not tf_vale(0.6, 200, 400, -200) and tf_vale(0.8, 200, 400, -200)
 
-    # 7. Sugestões só preenchem o que falta
+    # 7. WDL saturado em posição ganha: volta para a avaliação do motor
+    r = analisar([Candidato("Bxh7+", 0.0, w=100, d=0, l=0, aval_cp=599, **notas()),
+                  Candidato("Be3", 0.8, w=100, d=0, l=0, aval_cp=519, **notas(fc=10, assimetria=10))])
+    assert r["modo"].startswith("avaliação") and r["rel"]["Be3"] > 2.5, r
+
+    # 8. Sugestões só preenchem o que falta
     c = aplicar_sugestoes(Candidato("exd5+"))
     assert c.reversibilidade == 3.0 and c.forcamento == 8.0 and c.fc is None
     return True

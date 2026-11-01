@@ -28,6 +28,7 @@ from kivy.uix.textinput import TextInput
 from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO,
                       RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro)
 import hed_fontes as F
+import hed_auto as A
 from hed_tabuleiro import TelaAnalise
 
 FEN_INICIAL = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -112,7 +113,7 @@ class TelaLista(Screen):
         for i, c in enumerate(app.cands):
             linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
             wdl = f"  E {c.escore:.0f}%" if c.escore is not None else ""
-            marca = "" if c.filtro_ok else "  [filtro X]"
+            marca = ("" if c.filtro_ok else "  [filtro X]") + ("  auto" if c.auto else "")
             atp = f"ATP {c.atp:.2f}" if c.atp is not None else plural_notas(len(c.faltando()))
             b = Button(text=f"{c.lance}   perda {c.delta:.2f}{wdl}   {atp}{marca}",
                        background_normal="", background_color=(0.2, 0.22, 0.26, 1))
@@ -149,6 +150,7 @@ class TelaLista(Screen):
     def limpar(self):
         app = App.get_running_app()
         app.cands.clear()
+        app.tf_ultimo = None
         app.salvar()
         self.montar()
 
@@ -167,6 +169,7 @@ class TelaEdicao(Screen):
         self.sliders = {}
         self.original = c
         self.definidos = {k for k in ESTRATEGICOS + DIRETOS if getattr(c, k) is not None}
+        self.auto = set(c.auto)
         corpo = GridLayout(cols=1, spacing=dp(4), padding=dp(10))
 
         corpo.add_widget(rotulo("Lance (ex.: e5, Rd1):"))
@@ -191,7 +194,7 @@ class TelaEdicao(Screen):
             lw.add_widget(t)
         corpo.add_widget(lw)
 
-        dica = Label(text="Nota com — ainda não foi avaliada: toque ou arraste o controle para dar a nota.",
+        dica = Label(text="— = nota não avaliada; (auto) = estimada pelo app. Toque ou arraste para dar ou confirmar a nota.",
                      font_size="12sp", size_hint_y=None, height=dp(30), halign="left", valign="middle")
         dica.bind(size=lambda w, s: setattr(w, "text_size", s))
         corpo.add_widget(dica)
@@ -219,18 +222,21 @@ class TelaEdicao(Screen):
     def _slider(self, pai, chave, valor):
         linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
         txt = f"{ROTULOS[chave]}: {valor:.1f}" if valor is not None else f"{ROTULOS[chave]}: —"
+        if chave in self.auto:
+            txt += " (auto)"
         lb = Label(text=txt, size_hint_x=0.45, halign="left", valign="middle")
         lb.bind(size=lambda w, s: setattr(w, "text_size", s))
         s = Slider(min=0, max=10, step=0.5, value=5.0 if valor is None else valor, size_hint_x=0.55)
 
         def mudou(_s, v, lb=lb, k=chave):
             self.definidos.add(k)
+            self.auto.discard(k)              # ajustada por você: deixa de ser estimativa
             lb.text = f"{ROTULOS[k]}: {v:.1f}"
             self.atualizar()
 
         def tocou(sl, toque, lb=lb, k=chave):
             # um toque no controle também avalia (permite confirmar exatamente 5,0)
-            if sl.collide_point(*toque.pos) and k not in self.definidos:
+            if sl.collide_point(*toque.pos) and (k not in self.definidos or k in self.auto):
                 mudou(sl, sl.value, lb, k)
         s.bind(on_touch_up=tocou)
         s.bind(value=mudou)
@@ -247,7 +253,7 @@ class TelaEdicao(Screen):
         # perda editada à mão: a avaliação do motor deixa de valer para este lance
         aval = o.aval_cp if abs(delta - o.delta) < 1e-9 else None
         return replace(o, lance=self.lance.text.strip() or "?", delta=delta, filtro_ok=self.filtro.active,
-                       w=w, d=d, l=l, aval_cp=aval, **notas)
+                       w=w, d=d, l=l, aval_cp=aval, auto=[k for k in o.auto if k in self.auto], **notas)
 
     def atualizar(self):
         if not hasattr(self, "resumo"):
@@ -309,6 +315,12 @@ class TelaRegistrar(Screen):
         corpo.add_widget(rotulo("Resultado da partida (pode preencher depois):"))
         self.resultado = Spinner(text="—", values=CICLO, size_hint_y=None, height=ALTURA)
         corpo.add_widget(self.resultado)
+        self.tf_ok = None
+        tf = app.tf_ultimo
+        if tf and tf.get("situacao") == "conflito":
+            corpo.add_widget(rotulo(f"Você achou a linha forçada ({tf['tf']}) sem o motor?", font_size="13sp"))
+            self.tf_ok = Spinner(text="—", values=["—", "sim", "não"], size_hint_y=None, height=ALTURA)
+            corpo.add_widget(self.tf_ok)
         corpo.add_widget(Label())
         acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8))
         acoes.add_widget(botao("Cancelar", app.mostrar_relatorio, CINZA))
@@ -323,6 +335,9 @@ class TelaRegistrar(Screen):
                             RESULTADOS[self.resultado.text])
         if app.fen:
             reg["fen"] = app.fen
+        if self.tf_ok is not None and self.tf_ok.text != "—":
+            reg["tf_acertou"] = self.tf_ok.text == "sim"
+            reg["tf_lances"] = app.tf_ultimo.get("lances")
         app.registro.append(reg)
         app.salvar()
         app.ir("registro")
@@ -444,7 +459,7 @@ class TelaPosicao(Screen):
         def trabalho():
             try:
                 motor = app.obter_motor() if app.cfg["motor"] == "Stockfish local" else None
-                r = F.coletar(fen, app.cfg, motor, progresso)
+                r = F.coletar(fen, app.cfg, motor, progresso, A.taxa_acerto_tf(app.registro))
                 Clock.schedule_once(lambda dt: self.mostrar(r))
             except Exception as e:
                 msg = str(e)
@@ -471,6 +486,8 @@ class TelaPosicao(Screen):
             cab.append(f"Masters: {r['total_masters']} jogos | Lichess: {r.get('total_lichess', 0)} jogos")
         for a in r["avisos"]:
             cab.append(f"[color=ffcc66]! {a}[/color]")
+        if r.get("tf"):
+            cab.append(f"[color=99ccff]TF x Conversão: {r['tf']['texto']}[/color]")
         cab.append("[size=12sp]E = pontuação esperada | M/L = jogos e pontos nos bancos Masters/Lichess[/size]")
         self._status("\n".join(cab))
 
@@ -501,7 +518,10 @@ class TelaPosicao(Screen):
             self._status("Marque pelo menos um lance avaliado.")
             return
         ref = F.melhor_cp(self.resultado["opcoes"])
-        app.cands = [F.para_candidato(o, ref) for o in ops]
+        import chess
+        board = chess.Board(self.resultado["fen"])
+        app.cands = [F.para_candidato(o, ref, board) for o in ops]
+        app.tf_ultimo = self.resultado.get("tf")
         app.salvar()
         app.ir("lista")
 
@@ -513,6 +533,7 @@ class TelaTF(Screen):
     def on_enter(self, *_):
         if not getattr(self, "montada", False):
             self.montar()
+            self.usar_ultima(silencioso=True)
 
     def montar(self):
         app = App.get_running_app()
@@ -535,6 +556,7 @@ class TelaTF(Screen):
                 t.hint_text = "opcional (com motor: 100)"
             self.campos[chave] = t
             corpo.add_widget(t)
+        corpo.add_widget(botao("Usar a última análise do motor", self.usar_ultima, AZUL))
         self.saida = Label(text="", size_hint_y=None, halign="left", valign="top",
                            font_name="RobotoMono-Regular", font_size="13sp")
         self.saida.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
@@ -548,6 +570,25 @@ class TelaTF(Screen):
         acoes.add_widget(botao("Calcular", self.calcular, VERDE))
         raiz.add_widget(acoes)
         self.add_widget(raiz)
+
+    def on_pre_enter(self, *_):
+        if getattr(self, "montada", False):
+            self.usar_ultima(silencioso=True)
+
+    def usar_ultima(self, silencioso=False):
+        app = App.get_running_app()
+        tf = app.tf_ultimo
+        if not tf or tf.get("situacao") != "conflito" or tf.get("falha_cp") is None:
+            if not silencioso:
+                self.saida.text = seguro(tf["texto"] if tf else
+                                         "Sem análise do motor com TF. Analise uma posição (Tabuleiro ou FEN).")
+            return
+        for k, v in (("tranq", tf["tranq_cp"]), ("fim", tf["fim_cp"]), ("falha", tf["falha_cp"])):
+            self.campos[k].text = f"{v / 100:.2f}"
+        self.campos["p"].text = f"{100 * tf['p']:.0f}"
+        self.calcular()
+        self.saida.text += seguro(f"\n\nTF {tf['tf']} × tranquilo {tf['tranquilo']}\n"
+                                  f"Linha: {' '.join(tf.get('pv', []))}\nAcerto: {tf['fonte_p']}")
 
     def calcular(self):
         app = App.get_running_app()
@@ -641,6 +682,7 @@ class HEDApp(App):
         self.cands, self.registro = [], []
         self.aval_melhor, self.mi_pp, self.indice = None, MI_PP, None
         self.tf = {}
+        self.tf_ultimo = None
         self.ultimo, self.ultima_estrutura = None, ""
         self.cfg, self.fen = dict(F.CFG_PADRAO), ""
         self.partida = {"inicio": FEN_INICIAL, "lances": [], "idx": 0}
@@ -679,6 +721,7 @@ class HEDApp(App):
             self.aval_melhor = dados.get("aval_melhor")
             self.mi_pp = dados.get("mi_pp", MI_PP)
             self.tf = dados.get("tf", {})
+            self.tf_ultimo = dados.get("tf_ultimo")
             self.cands = [Candidato.de_dict(d) for d in dados.get("cands", [])]
             self.registro = dados.get("registro", [])
             self.ultima_estrutura = dados.get("ultima_estrutura", "")
@@ -691,7 +734,7 @@ class HEDApp(App):
     def salvar(self):
         try:
             with open(self.arquivo, "w", encoding="utf-8") as f:
-                json.dump({"aval_melhor": self.aval_melhor, "mi_pp": self.mi_pp, "tf": self.tf,
+                json.dump({"aval_melhor": self.aval_melhor, "mi_pp": self.mi_pp, "tf": self.tf, "tf_ultimo": self.tf_ultimo,
                            "cands": [c.para_dict() for c in self.cands],
                            "registro": self.registro, "ultima_estrutura": self.ultima_estrutura,
                            "cfg": self.cfg, "fen": self.fen, "partida": self.partida},
@@ -716,7 +759,7 @@ class HEDApp(App):
         botoes = [("Voltar", lambda: self.ir("lista"), CINZA)]
         if self.ultimo:
             botoes.append(("Registrar", self.abrir_registrar, VERDE))
-        self.sm.get_screen("texto").mostrar(relatorio(self.cands, aval, self.mi_pp), botoes)
+        self.sm.get_screen("texto").mostrar(relatorio(self.cands, aval, self.mi_pp, self.tf_ultimo), botoes)
         self.ir("texto")
 
     def abrir_registrar(self):

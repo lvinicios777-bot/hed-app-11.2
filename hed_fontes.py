@@ -468,7 +468,8 @@ def ler_partida(texto: str) -> (str, List[str]):
 
 
 # ======================================================== coleta combinada
-def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda s: None) -> Dict:
+def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda s: None,
+            p_registro: Optional[float] = None) -> Dict:
     cfg = {**CFG_PADRAO, **(cfg or {})}
     board = validar_fen(fen)
     r = {"fen": board.fen(), "lado": "brancas" if board.turn else "pretas",
@@ -528,6 +529,17 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
         o.masters = est["masters"].get(o.uci)
         o.lichess = est["lichess"].get(o.uci)
     r["opcoes"] = ops
+
+    # 3. TF × Conversão automática (nunca derruba a análise)
+    r["tf"] = None
+    try:
+        from hed_auto import tf_auto
+        local = motor if (cfg["motor"] == "Stockfish local" and motor is not None) else None
+        if local:
+            progresso("Medindo o custo de errar a linha forçada…")
+        r["tf"] = tf_auto(board, ops, local, min(2.0, float(cfg["tempo"])), p_registro)
+    except Exception as e:
+        r["avisos"].append(f"TF automática indisponível: {e}")
     return r
 
 
@@ -536,18 +548,29 @@ def melhor_cp(opcoes: List[Opcao]) -> Optional[int]:
     return max(v) if v else None
 
 
-def para_candidato(o: Opcao, ref_cp: int):
+def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
     """Converte uma Opcao em Candidato do HED (perda em peões vs melhor lance do motor).
 
-    Leva a avaliação (para a pontuação esperada), o WDL e as notas sugeridas pelo próprio
-    lance (Reversibilidade/Forçamento); as demais notas ficam vazias até o jogador avaliar.
+    Leva a avaliação (para a pontuação esperada) e o WDL. Com a posição (`board`), as 10 notas
+    vêm estimadas automaticamente (hed_auto) e ficam marcadas como 'auto' até o jogador ajustar;
+    sem ela, só Reversibilidade/Forçamento são sugeridas pelo próprio lance.
     """
     from hed_core import Candidato, aplicar_sugestoes
     delta = round(max(0, ref_cp - o.cp) / 100, 2)
     w = d = l = None
     if o.wdl:
         w, d, l = (x / 10 for x in o.wdl)
-    c = aplicar_sugestoes(Candidato(lance=o.san, delta=delta, w=w, d=d, l=l, aval_cp=o.cp))
+    c = Candidato(lance=o.san, delta=delta, w=w, d=d, l=l, aval_cp=o.cp)
+    if board is not None:
+        try:
+            from hed_auto import estimar_notas
+            for k, v in estimar_notas(board, chess.Move.from_uci(o.uci), o.wdl, o.mate).items():
+                setattr(c, k, v)
+                c.auto.append(k)
+        except Exception:
+            aplicar_sugestoes(c)
+    else:
+        aplicar_sugestoes(c)
     if o.masters:
         c.n_masters, c.pts_masters = o.masters.n, round(o.masters.pts, 3)
     if o.lichess:
