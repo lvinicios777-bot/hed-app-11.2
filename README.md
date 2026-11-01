@@ -77,7 +77,7 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **Rede:** carregue a sua (ex.: LD2.pb.gz) em Configurações → Carregar rede do Lc0; o app passa `WeightsFile` ao motor. A rede não fica no repositório.
 - **WDL do Lc0:** com "WDL usado na decisão = Lc0" (padrão), a vitória/empate/derrota de cada candidato vem do Lc0 (busca só nesses lances); o Stockfish continua dando a perda em peões, as linhas e a TF. Sem rede ou sem Lc0, volta ao WDL do Stockfish.
 - **Configurações → Testar Lc0:** inicia o motor com a rede e mostra o WDL da posição inicial.
-- O build confere a assinatura do próprio APK gerado contra `assinatura.sha256`.
+- O Gradle assinava com uma chave "Android Debug" própria, recriada a cada build. Agora o APK é reassinado com a chave fixa (CN=HED) e o build confere a assinatura contra `assinatura.sha256`. Quem tinha a 11.1.2.9 ou anterior precisa desinstalar uma única vez.
 
 ## Novidades da 11.1.2.9 — assinatura fixa
 
