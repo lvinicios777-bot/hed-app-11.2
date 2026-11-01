@@ -122,7 +122,7 @@ def _san_pv(board: chess.Board, ucis: List[str], n: int = 6) -> List[str]:
     out = []
     for u in ucis[:n]:
         try:
-            m = chess.Move.from_uci(u)
+            m = b.parse_uci(u)              # aceita roque como "rei captura torre" (e1h1), como o Lc0 escreve
             if m not in b.legal_moves:
                 break
             out.append(b.san(m))
@@ -500,13 +500,13 @@ class MotorVivo:
         self._env(go)
 
     # ---- uso
-    def vivo(self, board: chess.Board, multipv: int = 3, profundidade: int = 24):
+    def vivo(self, board: chess.Board, multipv: int = 3, profundidade: int = 24, go: Optional[str] = None):
         """Começa (ou reinicia) a análise ao vivo da posição; não bloqueia."""
         if not self.ativo or board.is_game_over():
             self.parar()
             return
         with self._trava:
-            self._iniciar(board, multipv, f"go depth {int(profundidade)}")
+            self._iniciar(board, multipv, go or f"go depth {int(profundidade)}")
 
     def parar(self):
         with self._trava:
@@ -515,6 +515,10 @@ class MotorVivo:
     @property
     def pensando(self) -> bool:
         return not self._fim.is_set()
+
+    def fen_atual(self) -> Optional[str]:
+        with self._dados:
+            return self._board.fen() if self._board is not None else None
 
     def linhas(self) -> (List[Opcao], int):
         with self._dados:
@@ -525,13 +529,13 @@ class MotorVivo:
         for mpv in sorted(info):
             d = info[mpv]
             try:
-                m = chess.Move.from_uci(d["pv"][0])
+                m = board.parse_uci(d["pv"][0])   # normaliza o roque do Lc0 (e1h1 -> e1g1)
                 san = board.san(m)
             except (ValueError, IndexError, AssertionError):
                 continue
             mate = d.get("mate")
             cp = mate_para_cp(mate) if mate is not None else d.get("cp")
-            ops.append(Opcao(d["pv"][0], san, cp=cp, mate=mate, wdl=d.get("wdl"),
+            ops.append(Opcao(m.uci(), san, cp=cp, mate=mate, wdl=d.get("wdl"),
                              pv=_san_pv(board, d["pv"], 10), multipv=mpv))
             prof = max(prof, d["depth"])
         return ops, prof
@@ -663,15 +667,26 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
     if lc0 is not None and ops:
         try:
             progresso("Lc0 calculando as chances (WDL) dos lances…")
-            ucis = [o.uci for o in ops][:8]
+            ucis = [o.uci for o in ops][:12]
             lops, _ = lc0.buscar(board, len(ucis), float(cfg["tempo"]), ucis)
             por = {o.uci: o for o in lops if o.wdl}
             for o in ops:
                 x = por.get(o.uci)
                 if x:
                     o.wdl_sf, o.wdl, o.fonte_wdl, o.cp_lc0 = o.wdl, x.wdl, "Lc0", x.cp
-            if por:
-                r["fonte_wdl"] = f"Lc0 ({len(por)}/{len(ops)} lances)"
+            # os que o Lc0 não cobriu: avalia a posição depois do lance (WDL do adversário, invertido)
+            faltam = [o for o in ops if o.fonte_wdl != "Lc0"][:6]
+            if faltam:
+                progresso(f"Lc0 completando {len(faltam)} lance(s)…")
+            t1 = max(0.5, min(1.5, float(cfg["tempo"]) / 2))
+            for o in faltam:
+                wdl = wdl_depois(lc0, board, o.uci, t1)
+                if wdl:
+                    o.wdl_sf, o.wdl, o.fonte_wdl = o.wdl, wdl, "Lc0"
+                    por[o.uci] = o
+            n = sum(1 for o in ops if o.fonte_wdl == "Lc0")
+            if n:
+                r["fonte_wdl"] = f"Lc0 ({n}/{len(ops)} lances)"
             else:
                 r["avisos"].append("Lc0 não devolveu WDL: usado o do Stockfish.")
         except Exception as e:
@@ -689,6 +704,22 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
     except Exception as e:
         r["avisos"].append(f"TF automática indisponível: {e}")
     return r
+
+
+def wdl_depois(motor, board: chess.Board, uci: str, tempo: float) -> Optional[tuple]:
+    """WDL de quem joga, calculado na posição depois do lance (ponto de vista do adversário, invertido)."""
+    b2 = board.copy()
+    b2.push(board.parse_uci(uci))
+    if b2.is_game_over():
+        r = b2.result()
+        if r == "1/2-1/2":
+            return (0, 1000, 0)
+        return (1000, 0, 0)                      # quem acabou de jogar deu mate
+    ops, _ = motor.buscar(b2, 1, tempo)
+    if ops and ops[0].wdl:
+        w, d, l = ops[0].wdl
+        return (l, d, w)
+    return None
 
 
 def comparar_motores(ops: List[Opcao], r: Dict) -> None:

@@ -329,6 +329,7 @@ class TelaAnalise(Screen):
         app = App.get_running_app()
         if app.motor:
             app.motor.parar()
+        self._parar_lc0()
 
     # ---- partida
     def _board(self):
@@ -375,6 +376,10 @@ class TelaAnalise(Screen):
 
         self.barra = BarraAval(size_hint_y=None, height=dp(8))
         raiz.add_widget(self.barra)
+        self.l_lc0 = Label(text="", markup=True, font_size="12sp", size_hint_y=None, height=dp(20),
+                           halign="left", valign="middle")
+        self.l_lc0.bind(size=lambda w, s: setattr(w, "text_size", s))
+        raiz.add_widget(self.l_lc0)
         self.tab = Tabuleiro(self.jogar, size_hint_y=None)
         raiz.bind(width=lambda w, v: setattr(self.tab, "height", v - dp(8)))
         raiz.add_widget(self.tab)
@@ -429,6 +434,7 @@ class TelaAnalise(Screen):
         raiz.add_widget(baixo)
         self.add_widget(raiz)
         self._ultimas = None
+        self._sf, self._lc0, self._lc0_chave = None, [], None
 
     # ---- ações
     def alternar_motor(self):
@@ -438,6 +444,8 @@ class TelaAnalise(Screen):
         app = App.get_running_app()
         if not self.motor_ligado and app.motor:
             app.motor.parar()
+        if not self.motor_ligado:
+            self._parar_lc0()
         self.atualizar()
 
     def girar(self):
@@ -491,6 +499,8 @@ class TelaAnalise(Screen):
         self.tab.seta = None
         self._gen += 1
         self._ultimas = None
+        self._sf, self._lc0, self._lc0_chave = None, [], None
+        self.l_lc0.text = ""
         self.caixa_linhas.clear_widgets()
         self.l_aval.text = ""
         self.l_info.text = ""
@@ -506,6 +516,9 @@ class TelaAnalise(Screen):
                 if app.motor:
                     app.motor.parar()
                 self._nuvem(b, self._gen)
+            self._iniciar_lc0(b, self._gen)
+        else:
+            self._parar_lc0()
         self.tab.desenhar()
         self._lista_lances()
         self._explorador()
@@ -530,13 +543,88 @@ class TelaAnalise(Screen):
 
     def _tique(self, dt):
         app = App.get_running_app()
-        if not (self.motor_ligado and self._usa_local()):
+        if not self.motor_ligado:
             return
-        ops, prof = app.motor.linhas()
-        chave = (prof, tuple((o.uci, o.cp, o.mate) for o in ops))
-        if ops and chave != self._ultimas:
-            self._ultimas = chave
-            self._mostrar_linhas(ops, prof, app.motor.nome, app.motor.pensando)
+        mudou = False
+        if self._usa_local():
+            ops, prof = app.motor.linhas()
+            chave = (prof, tuple((o.uci, o.cp, o.mate) for o in ops))
+            if ops and chave != self._ultimas:
+                self._ultimas = chave
+                self._sf = (ops, prof, app.motor.nome, app.motor.pensando)
+                mudou = True
+        lc = self._lc0_linhas()
+        if lc is not None:
+            ch = (tuple((o.uci, o.wdl) for o in lc), app.lc0.pensando)
+            if ch != self._lc0_chave:
+                self._lc0_chave, self._lc0 = ch, lc
+                mudou = True
+        if mudou:
+            if self._sf:
+                self._mostrar_linhas(*self._sf)
+            else:
+                self._resumo_lc0()
+
+    # ---- Lc0 ao vivo: chances (WDL) dos lances do Stockfish
+    def _quer_lc0(self):
+        return App.get_running_app().cfg.get("wdl", "Lc0") == "Lc0"
+
+    def _iniciar_lc0(self, b, gen):
+        if not self._quer_lc0() or b.is_game_over():
+            return
+        app = App.get_running_app()
+        nos = int(app.cfg.get("nos_lc0_vivo", 50000))
+        if app.lc0 is None:
+            self.l_lc0.text = "[color=999999]Lc0: iniciando…[/color]"
+
+        def tarefa():
+            m = app.obter_lc0()
+            if m is None:
+                erro = getattr(app, "lc0_erro", "")
+                Clock.schedule_once(lambda dt: setattr(
+                    self.l_lc0, "text", f"[color=ffcc66]Lc0 indisponível{': ' + erro if erro else ''}[/color]")
+                    if gen == self._gen else None)
+                return
+            if gen == self._gen:
+                m.vivo(b, 8, go=f"go nodes {nos}")
+        threading.Thread(target=tarefa, daemon=True).start()
+
+    def _parar_lc0(self):
+        app = App.get_running_app()
+        if getattr(app, "lc0", None):
+            threading.Thread(target=app.lc0.parar, daemon=True).start()
+
+    def _lc0_linhas(self):
+        app = App.get_running_app()
+        m = getattr(app, "lc0", None)
+        if m is None or not self._quer_lc0() or self.tab.board is None:
+            return None
+        if m.fen_atual() != self.tab.board.fen():
+            return None
+        ops, _ = m.linhas()
+        return [o for o in ops if o.wdl]
+
+    def _resumo_lc0(self, melhor_sf=None):
+        """Linha abaixo da barra: o que o Lc0 acha do melhor lance do Stockfish."""
+        app = App.get_running_app()
+        if not self._lc0:
+            return
+        lc = {o.uci: o for o in self._lc0}
+        top = max(self._lc0, key=lambda o: o.expectativa)
+        pens = " ..." if app.lc0 and app.lc0.pensando else ""
+        if melhor_sf is None:
+            self.l_lc0.text = f"Lc0{pens}: prefere [b]{top.san}[/b] (E {top.expectativa:.0f}%)"
+        elif melhor_sf.uci == top.uci:
+            self.l_lc0.text = f"[color=77dd77]Lc0{pens}: concorda com o Stockfish ({top.san}, E {top.expectativa:.0f}%)[/color]"
+        else:
+            e_sf = lc.get(melhor_sf.uci)
+            if e_sf and top.expectativa - e_sf.expectativa < 1.0:      # diferença < 1 pp: mesma coisa
+                self.l_lc0.text = (f"[color=77dd77]Lc0{pens}: {melhor_sf.san} e {top.san} equivalentes "
+                                   f"(E {e_sf.expectativa:.0f}%)[/color]")
+                return
+            extra = f"; {melhor_sf.san} tem E {e_sf.expectativa:.0f}%" if e_sf else ""
+            self.l_lc0.text = (f"[color=ffcc66]Lc0{pens}: prefere [b]{top.san}[/b] "
+                               f"(E {top.expectativa:.0f}%){extra}[/color]")
 
     def _nuvem(self, b, gen):
         self.l_info.text = "Nuvem do Lichess..."
@@ -552,7 +640,8 @@ class TelaAnalise(Screen):
                 if gen != self._gen:
                     return
                 if ops:
-                    self._mostrar_linhas(ops, prof, "Lichess nuvem", False)
+                    self._sf = (ops, prof, "Lichess nuvem", False)
+                    self._mostrar_linhas(*self._sf)
                 else:
                     self.l_info.text = msg or ""
             Clock.schedule_once(ui)
@@ -565,16 +654,31 @@ class TelaAnalise(Screen):
         self.l_aval.text = f"[b]{F.texto_aval(o1, branco)}[/b]"
         cp_b = (o1.cp if branco else -o1.cp) if o1.cp is not None else None
         self.barra.definir(F.chance_brancas(cp_b))
-        e = f" | E {o1.expectativa:.0f}%" if o1.expectativa is not None else ""
-        self.l_info.text = f"{fonte}\nprof. {prof}{' ...' if pensando else ''}{e}"
+        self.l_info.text = f"{fonte}\nprof. {prof}{' ...' if pensando else ''}"
         self.tab.seta = o1.uci
         self.tab.desenhar()
+        lc = {o.uci: o for o in self._lc0}
+        usa_lc0 = self._quer_lc0() and getattr(App.get_running_app(), "lc0", None) is not None
+        self._resumo_lc0(o1)
         self.caixa_linhas.clear_widgets()
         for o in ops:
             num = f"{b.fullmove_number}." if branco else f"{b.fullmove_number}..."
             txt = f"[b]{F.texto_aval(o, branco):>6}[/b]  {num} {' '.join(o.pv[:8])}"
+            x = lc.get(o.uci)
+            if x:
+                w, d, l = (round(v / 10) for v in x.wdl)
+                txt += (f"\n[color=99ccff]        Lc0: V {w}% | Emp {d}% | D {l}% "
+                        f"-> E {x.expectativa:.0f}%[/color]")
+            elif usa_lc0:
+                app = App.get_running_app()
+                quieto = self._lc0 and not app.lc0.pensando
+                txt += ("\n[color=888888]        Lc0: fora dos 8 melhores dele[/color]" if quieto
+                        else "\n[color=888888]        Lc0: calculando...[/color]")
+            elif o.wdl and o is o1:
+                txt += f"\n[color=888888]        WDL Stockfish: E {o.expectativa:.0f}%[/color]"
+            duas = "\n" in txt
             bt = Button(text=ascii_(txt), markup=True, font_name="RobotoMono-Regular", font_size="12sp",
-                        size_hint_y=None, height=dp(30), halign="left", valign="middle",
+                        size_hint_y=None, height=dp(46 if duas else 30), halign="left", valign="middle",
                         background_normal="", background_color=(0.17, 0.18, 0.21, 1))
             bt.bind(size=lambda w, s: setattr(w, "text_size", (s[0] - dp(8), s[1])))
             bt.bind(on_release=lambda _b, u=o.uci: self.jogar(chess.Move.from_uci(u)))
