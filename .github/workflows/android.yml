@@ -64,6 +64,17 @@ jobs:
           mkdir -p libs/arm64-v8a
           cp sf/src/stockfish libs/arm64-v8a/libstockfish.so
 
+      - name: Lc0 0.33 (binário oficial para Android, arm64)
+        run: |
+          mkdir -p libs/arm64-v8a
+          cp motores/liblc0.so libs/arm64-v8a/liblc0.so
+          python - <<'PY'
+          import struct
+          t = struct.unpack('<H', open('libs/arm64-v8a/liblc0.so', 'rb').read(18)[16:18])[0]
+          assert t == 3, 'Lc0 não é PIE'
+          print('Lc0 PIE ok')
+          PY
+
       - name: Conferir formato do Stockfish (precisa ser PIE para o Android)
         run: |
           file libs/arm64-v8a/libstockfish.so
@@ -97,8 +108,9 @@ jobs:
             | grep -m1 "SHA256:" | awk '{print $2}')
           echo "Impressão digital da chave: $impressao"
           if [ -f assinatura.sha256 ]; then
-            esperado=$(tr -d ' \n' < assinatura.sha256)
-            if [ "$impressao" != "$esperado" ]; then
+            esperado=$(tr -d ' :\n' < assinatura.sha256 | tr 'A-F' 'a-f')
+            atual=$(echo "$impressao" | tr -d ':' | tr 'A-F' 'a-f')
+            if [ "$atual" != "$esperado" ]; then
               echo "::error::A chave de assinatura mudou (cache perdido). O APK não instalaria por cima; build interrompido."
               exit 1
             fi
@@ -129,8 +141,21 @@ jobs:
       - name: Gerar APK
         run: buildozer -v android debug 2>&1 | tee build.log
 
-      - name: Conferir Stockfish dentro do APK
-        run: unzip -l bin/*.apk | grep libstockfish.so
+      - name: Conferir Stockfish e Lc0 dentro do APK
+        run: unzip -l bin/*.apk | grep -E "libstockfish.so|liblc0.so"; unzip -l bin/*.apk | grep -q liblc0.so
+
+      - name: Conferir a assinatura do APK gerado
+        run: |
+          ASSINA=$(ls /usr/local/lib/android/sdk/build-tools/*/apksigner ~/.buildozer/android/platform/android-sdk/build-tools/*/apksigner 2>/dev/null | tail -1)
+          echo "apksigner: $ASSINA"
+          atual=$("$ASSINA" verify --print-certs bin/*.apk | grep -m1 "SHA-256 digest" | awk '{print $NF}' | tr 'A-F' 'a-f')
+          esperado=$(tr -d ' :\n' < assinatura.sha256 | tr 'A-F' 'a-f')
+          echo "APK: $atual"
+          echo "esperado: $esperado"
+          if [ "$atual" != "$esperado" ]; then
+            echo "::error::O APK foi assinado com outra chave: não instalaria por cima da versão anterior."
+            exit 1
+          fi
 
       - name: Mostrar erro (se falhar)
         if: failure()

@@ -23,6 +23,7 @@ import chess
 UA = "HED-app/11.2 (+github.com/lvinicios777-bot/hed-app-11.2)"
 MATE_CP = 10000
 CFG_PADRAO = {
+    "wdl": "Lc0",
     "token": "",
     "motor": "Stockfish local",      # ou "Lichess nuvem"
     "tempo": 4.0,                    # segundos por busca
@@ -57,6 +58,7 @@ class Opcao:
     cp: Optional[int] = None              # POV de quem joga; mate convertido
     mate: Optional[int] = None
     wdl: Optional[tuple] = None           # (W, D, L) em ‰, POV de quem joga
+    wdl_sf: Optional[tuple] = None        # WDL do Stockfish, guardado quando o do Lc0 o substitui
     pv: List[str] = field(default_factory=list)
     multipv: Optional[int] = None         # posição no ranking do motor (None = extra)
     masters: Optional[Estat] = None
@@ -262,6 +264,71 @@ def diagnostico_stockfish() -> str:
     return "\n".join(L)
 
 
+def caminho_lc0() -> Optional[str]:
+    """Lc0 empacotado como biblioteca nativa (liblc0.so) ou indicado por HED_LC0."""
+    cands = []
+    if os.environ.get("HED_LC0"):
+        cands.append(os.environ["HED_LC0"])
+    try:
+        from jnius import autoclass
+        act = autoclass("org.kivy.android.PythonActivity").mActivity
+        cands.append(os.path.join(act.getApplicationInfo().nativeLibraryDir, "liblc0.so"))
+    except Exception:
+        pass
+    sf = caminho_stockfish()
+    if sf and sf.endswith("libstockfish.so"):
+        cands.append(os.path.join(os.path.dirname(sf), "liblc0.so"))
+    for c in cands:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
+def diagnostico_lc0(rede: Optional[str]) -> str:
+    """Inicia o Lc0 com a rede escolhida e calcula 1 posição: confirma que motor e rede funcionam."""
+    import threading
+    import time
+    L = ["DIAGNÓSTICO DO LC0", ""]
+    alvo = caminho_lc0()
+    L.append(f"Binário: {alvo or 'não encontrado'}")
+    L.append(f"Rede: {rede if rede and os.path.isfile(rede) else 'não carregada (Configurações → Carregar rede)'}")
+    if not alvo or not rede or not os.path.isfile(rede):
+        return "\n".join(L)
+    linhas: List[str] = []
+    try:
+        p = subprocess.Popen([alvo], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, bufsize=1)
+
+        def ler():
+            for x in p.stdout:
+                linhas.append(x.strip())
+        threading.Thread(target=ler, daemon=True).start()
+        ini = time.time()
+        for cmd in ("uci", f"setoption name WeightsFile value {rede}", "setoption name UCI_ShowWDL value true",
+                    "isready", "position startpos", "go nodes 40"):
+            p.stdin.write(cmd + "\n")
+            p.stdin.flush()
+        while time.time() - ini < 90 and not any(x.startswith("bestmove") for x in linhas):
+            time.sleep(0.3)
+        p.stdin.write("quit\n")
+        p.stdin.flush()
+        nome = next((x[8:] for x in linhas if x.startswith("id name")), "?")
+        wdl = [x for x in linhas if " wdl " in x]
+        L.append(f"Motor: {nome} | {time.time() - ini:.1f}s")
+        if wdl:
+            t = wdl[-1].split()
+            i = t.index("wdl")
+            L.append(f"WDL da posição inicial: {t[i + 1]}/{t[i + 2]}/{t[i + 3]} (‰)")
+        erros = [x for x in linhas if "rror" in x or "xception" in x]
+        if erros:
+            L.append("Mensagens: " + " | ".join(erros[:3]))
+        L.append("RESULTADO: " + ("OK, o Lc0 funciona com esta rede." if any(x.startswith("bestmove") for x in linhas)
+                                  else "FALHOU."))
+    except Exception as e:
+        L.append(f"RESULTADO: FALHOU ao executar — {type(e).__name__}: {e}")
+    return "\n".join(L)
+
+
 class Motor:
     def __init__(self, caminho: str, hash_mb: int = 64):
         self.caminho = caminho
@@ -347,10 +414,11 @@ class MotorVivo:
     Uma única instância (um processo) serve o tabuleiro e o HED.
     """
 
-    def __init__(self, caminho: str, hash_mb: int = 64):
+    def __init__(self, caminho: str, hash_mb: int = 64, opcoes: Optional[Dict[str, str]] = None,
+                 nome: str = "Stockfish"):
         import threading
         self.caminho = caminho
-        self.nome = "Stockfish"
+        self.nome = nome
         self.p = subprocess.Popen([caminho], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self._trava = threading.RLock()
@@ -363,11 +431,13 @@ class MotorVivo:
         threading.Thread(target=self._ler, daemon=True).start()
         self._env("uci")
         if not self._uciok.wait(30):
-            raise FonteErro("o Stockfish não respondeu")
-        threads = max(1, min(4, (os.cpu_count() or 2) - 1))
+            raise FonteErro(f"o {nome} não respondeu")
         self._env("setoption name UCI_ShowWDL value true")
-        self._env(f"setoption name Threads value {threads}")
-        self._env(f"setoption name Hash value {hash_mb}")
+        if opcoes is None:
+            threads = max(1, min(4, (os.cpu_count() or 2) - 1))
+            opcoes = {"Threads": str(threads), "Hash": str(hash_mb)}
+        for k, v in opcoes.items():
+            self._env(f"setoption name {k} value {v}")
         self._sincronizar()
 
     # ---- baixo nível
@@ -520,7 +590,7 @@ def ler_partida(texto: str) -> (str, List[str]):
 
 # ======================================================== coleta combinada
 def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda s: None,
-            p_registro: Optional[float] = None) -> Dict:
+            p_registro: Optional[float] = None, lc0=None) -> Dict:
     cfg = {**CFG_PADRAO, **(cfg or {})}
     board = validar_fen(fen)
     r = {"fen": board.fen(), "lado": "brancas" if board.turn else "pretas",
@@ -580,6 +650,24 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
         o.masters = est["masters"].get(o.uci)
         o.lichess = est["lichess"].get(o.uci)
     r["opcoes"] = ops
+
+    # 2b. WDL do Lc0 (mais "humano" e menos saturado que o do Stockfish) para os mesmos lances
+    r["fonte_wdl"] = "Stockfish" if any(o.wdl for o in ops) else None
+    if lc0 is not None and ops:
+        try:
+            progresso("Lc0 calculando o WDL dos lances…")
+            ucis = [o.uci for o in ops][:8]
+            lops, _ = lc0.buscar(board, len(ucis), float(cfg["tempo"]), ucis)
+            wdl = {o.uci: o.wdl for o in lops if o.wdl}
+            for o in ops:
+                if o.uci in wdl:
+                    o.wdl_sf, o.wdl = o.wdl, wdl[o.uci]
+            if wdl:
+                r["fonte_wdl"] = f"Lc0 ({len(wdl)}/{len(ops)} lances)"
+            else:
+                r["avisos"].append("Lc0 não devolveu WDL: usado o do Stockfish.")
+        except Exception as e:
+            r["avisos"].append(f"Lc0 indisponível ({e}): usado o WDL do Stockfish.")
 
     # 3. TF × Conversão automática (nunca derruba a análise)
     r["tf"] = None

@@ -87,8 +87,8 @@ def campo(texto="", filtro=None):
     return TextInput(text=texto, multiline=False, input_filter=filtro, size_hint_y=None, height=ALTURA)
 
 
-def escolher_epub(pasta_destino, ao_terminar):
-    """Abre o seletor de arquivos do Android e copia o EPUB escolhido para a pasta do app."""
+def escolher_epub(pasta_destino, ao_terminar, nome="livro.epub"):
+    """Abre o seletor de arquivos do Android e copia o arquivo escolhido para a pasta do app."""
     try:
         from jnius import autoclass
         from android import activity
@@ -98,7 +98,7 @@ def escolher_epub(pasta_destino, ao_terminar):
     Intent = autoclass("android.content.Intent")
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
     pedido = 7341
-    destino = os.path.join(pasta_destino, "livro.epub")
+    destino = os.path.join(pasta_destino, nome)
 
     def resultado(codigo, resposta, dados):
         if codigo != pedido:
@@ -529,7 +529,8 @@ class TelaPosicao(Screen):
         def trabalho():
             try:
                 motor = app.obter_motor() if app.cfg["motor"] == "Stockfish local" else None
-                r = F.coletar(fen, app.cfg, motor, progresso, A.taxa_acerto_tf(app.registro))
+                lc0 = app.obter_lc0() if app.cfg.get("wdl", "Lc0") == "Lc0" else None
+                r = F.coletar(fen, app.cfg, motor, progresso, A.taxa_acerto_tf(app.registro), lc0)
                 Clock.schedule_once(lambda dt: self.mostrar(r))
             except Exception as e:
                 msg = str(e)
@@ -552,6 +553,8 @@ class TelaPosicao(Screen):
             cab.append(f"Abertura: {r['abertura']}")
         if r["fonte"]:
             cab.append(f"Motor: {r['fonte']} (prof. {r['prof']})")
+        if r.get("fonte_wdl"):
+            cab.append(f"WDL: {r['fonte_wdl']}")
         if r.get("total_masters") is not None:
             cab.append(f"Masters: {r['total_masters']} jogos | Lichess: {r.get('total_lichess', 0)} jogos")
         for a in r["avisos"]:
@@ -944,6 +947,21 @@ class TelaConfig(Screen):
                                 font_size="12sp"))
         corpo.add_widget(botao("Testar Stockfish", self.testar_motor, AZUL))
 
+        corpo.add_widget(Label(text="[b]Lc0 (WDL dos lances)[/b]", markup=True, size_hint_y=None, height=dp(36)))
+        corpo.add_widget(rotulo("WDL usado na decisão:"))
+        self.fonte_wdl = Spinner(text=c.get("wdl", "Lc0"), values=["Lc0", "Stockfish"], size_hint_y=None,
+                                 height=ALTURA)
+        corpo.add_widget(self.fonte_wdl)
+        rede = app.arquivo_rede_lc0
+        self.status_lc0 = rotulo(
+            ("Rede carregada: " + f"{os.path.getsize(rede) / 1e6:.1f} MB") if os.path.isfile(rede)
+            else "Nenhuma rede carregada (ex.: LD2.pb.gz).", font_size="12sp")
+        corpo.add_widget(self.status_lc0)
+        if app.lc0_erro:
+            corpo.add_widget(rotulo(f"Último erro do Lc0: {app.lc0_erro}", font_size="12sp"))
+        corpo.add_widget(botao("Carregar rede do Lc0 (.pb.gz)", self.escolher_rede, AZUL))
+        corpo.add_widget(botao("Testar Lc0", self.testar_lc0, AZUL))
+
         corpo.add_widget(Label(text="[b]Livro de aberturas (EPUB, ex.: FCO)[/b]", markup=True,
                                size_hint_y=None, height=dp(36)))
         ind = app.livro()
@@ -969,6 +987,30 @@ class TelaConfig(Screen):
         acoes.add_widget(botao("Salvar", self.salvar, VERDE))
         raiz.add_widget(acoes)
         self.add_widget(raiz)
+
+    def escolher_rede(self):
+        app = App.get_running_app()
+        self.status_lc0.text = "Abrindo o seletor de arquivos…"
+
+        def pronto(caminho, erro):
+            if caminho:
+                app.fechar_lc0()                       # reinicia o Lc0 com a rede nova
+                self.status_lc0.text = f"Rede carregada: {os.path.getsize(caminho) / 1e6:.1f} MB"
+            else:
+                self.status_lc0.text = f"Não carregada: {erro}"
+        escolher_epub(app.user_data_dir, pronto, nome="lc0_rede.pb.gz")
+
+    def testar_lc0(self):
+        app = App.get_running_app()
+        tela = app.sm.get_screen("texto")
+        tela.mostrar("Testando o Lc0… (até 90 s)", [("Voltar", lambda: app.ir("config"), CINZA)])
+        app.ir("texto")
+
+        def trabalho():
+            app.fechar_lc0()
+            txt = F.diagnostico_lc0(app.arquivo_rede_lc0)
+            Clock.schedule_once(lambda dt: tela.mostrar(txt, [("Voltar", lambda: app.ir("config"), CINZA)]))
+        threading.Thread(target=trabalho, daemon=True).start()
 
     def escolher_livro(self):
         app = App.get_running_app()
@@ -1008,7 +1050,7 @@ class TelaConfig(Screen):
 
     def salvar(self):
         app = App.get_running_app()
-        app.cfg.update(token=self.token.text.strip(), motor=self.motor.text,
+        app.cfg.update(wdl=self.fonte_wdl.text, token=self.token.text.strip(), motor=self.motor.text,
                        ratings=self.ratings.text.strip() or F.CFG_PADRAO["ratings"],
                        speeds=self.speeds.text.strip() or F.CFG_PADRAO["speeds"],
                        **{k: int(s.value) for k, s in self.sl.items()})
@@ -1023,6 +1065,7 @@ class HEDApp(App):
     def build(self):
         self.arquivo = os.path.join(self.user_data_dir, "hed_dados.json")
         self.arquivo_livro = os.path.join(self.user_data_dir, "livro_indice.json")
+        self.arquivo_rede_lc0 = os.path.join(self.user_data_dir, "lc0_rede.pb.gz")
         self.cands, self.registro = [], []
         self.aval_melhor, self.mi_pp, self.indice = None, MI_PP, None
         self.tf = {}
@@ -1033,6 +1076,7 @@ class HEDApp(App):
         self.partida = {"inicio": FEN_INICIAL, "lances": [], "idx": 0}
         self.motor, self._trava_motor = None, threading.Lock()
         self.motor_erro = ""
+        self.lc0, self.lc0_erro, self._trava_lc0 = None, "", threading.Lock()
         self.carregar()
         self.sm = ScreenManager(transition=NoTransition())
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
@@ -1060,9 +1104,34 @@ class HEDApp(App):
                         self.motor_erro = f"{type(e).__name__}: {e}"
             return self.motor
 
+    def obter_lc0(self):
+        """Lc0 com a rede do jogador (WeightsFile); None se faltar binário ou rede."""
+        with self._trava_lc0:
+            if self.lc0 is None:
+                caminho = F.caminho_lc0()
+                if not caminho:
+                    self.lc0_erro = "binário do Lc0 não encontrado"
+                elif not os.path.isfile(self.arquivo_rede_lc0):
+                    self.lc0_erro = "rede não carregada (Configurações → Carregar rede do Lc0)"
+                else:
+                    try:
+                        self.lc0 = F.MotorVivo(caminho, nome="Lc0",
+                                               opcoes={"WeightsFile": self.arquivo_rede_lc0, "Threads": "2"})
+                        self.lc0_erro = ""
+                    except Exception as e:
+                        self.lc0, self.lc0_erro = None, f"{type(e).__name__}: {e}"
+            return self.lc0
+
+    def fechar_lc0(self):
+        with self._trava_lc0:
+            if self.lc0:
+                self.lc0.fechar()
+            self.lc0 = None
+
     def on_stop(self):
         if self.motor:
             self.motor.fechar()
+        self.fechar_lc0()
 
     def livro(self):
         """Índice do livro do jogador (None se nenhum livro foi carregado)."""

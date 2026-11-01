@@ -11,6 +11,7 @@ Versão 11.1.2: 11.1 + 11.1.1 + medição da 11.2, com regras de decisão fechad
 | 'hed_auto.py' | Notas estimadas pela posição e TF × Conversão automática pelo motor |
 | 'hed_livro.py' | Lê e indexa o livro de aberturas do jogador (EPUB) no celular e consulta as linhas |
 | 'hed_plano.py' | Análise da continuação: estrutura, peças, espaço e planos no fim da linha |
+| 'motores/' | Lc0 0.33 (binário oficial Android, GPL v3) e informações de licença |
 | 'main.py' | Interface Android (Kivy) |
 | 'buildozer.spec' | Configuração do APK |
 | '.github/workflows/android.yml' | Gera o APK no GitHub Actions |
@@ -69,6 +70,14 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **Notas:** as 10 notas vêm estimadas pela posição e pelo WDL (`hed_auto.py`) e aparecem como "(auto)" na edição. Tocar ou arrastar confirma/ajusta e tira a marca. FC e Assimetria são as estimativas mais fracas: ajuste-as.
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
+
+## Novidades da 11.1.2.10 — Lc0 0.33 com a rede do jogador
+
+- **Lc0 v0.33.0-rc0** (binário oficial para Android, GPL v3 — ver `motores/LEIA-ME.md`) vai no APK junto do Stockfish.
+- **Rede:** carregue a sua (ex.: LD2.pb.gz) em Configurações → Carregar rede do Lc0; o app passa `WeightsFile` ao motor. A rede não fica no repositório.
+- **WDL do Lc0:** com "WDL usado na decisão = Lc0" (padrão), a vitória/empate/derrota de cada candidato vem do Lc0 (busca só nesses lances); o Stockfish continua dando a perda em peões, as linhas e a TF. Sem rede ou sem Lc0, volta ao WDL do Stockfish.
+- **Configurações → Testar Lc0:** inicia o motor com a rede e mostra o WDL da posição inicial.
+- O build confere a assinatura do próprio APK gerado contra `assinatura.sha256`.
 
 ## Novidades da 11.1.2.9 — assinatura fixa
 
