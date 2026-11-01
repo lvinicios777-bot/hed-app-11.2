@@ -270,7 +270,7 @@ const KEY = 'grade-horaria-v4';
 const LIM_DEF = 18;
 const DIAS = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 const DIAS3 = ['Seg','Ter','Qua','Qui','Sex','Sáb'];
-const W = {clash:100, unav:80, exc:40, empty:6, dist:4, gap:3, gem:4, plAlone:5};
+const W = {clash:100, unav:80, exc:40, empty:6, dist:4, gap:3, gem:4, plAlone:5, plFora:2};
 
 let distMsg = '', hMsg = {};
 let S, R = null, step = 0, openProf = null, resTab = 'turmas', sel = null, resetArmed = false, running = false, ver = 0, pendingFocus = null;
@@ -459,6 +459,23 @@ const plFixos = p => plFixEff(p).reduce((a, b) => a + b, 0);
 const habilitados = did => S.professores.filter(p => p.discs.includes(did));
 const demanda = d => S.turmas.reduce((s, t) => s + aulas(t, d), 0);
 function isBlocked(p, d, s, e){ return p.indisp.some(c => { if (+c[0] !== d) return false; const m = toMin(c.slice(2, 4) + ':' + c.slice(4)); return s < m + 30 && m < e; }); }
+/* quantas atividades cabem para o professor, por dia, sem sobreposição (escalonamento por término mais cedo) */
+const capCache = new Map();
+function capRelogio(p, keys){
+  const ck = p.id + '#' + p.indisp.length + '#' + [...keys].sort().join(',') + '#' + S.escola.dur + '#' + ver;
+  if (capCache.has(ck)) return capCache.get(ck);
+  const tls = [...keys].map(tlOfKey); let tot = 0;
+  for (let d = 0; d < S.escola.dias; d++){
+    const iv = []; const seen = new Set();
+    for (const tl of tls) for (const a of tl.aulas){ const k = a.s + '-' + a.e; if (seen.has(k)) continue; seen.add(k); if (!isBlocked(p, d, a.s, a.e)) iv.push(a); }
+    iv.sort((a, b) => a.e - b.e); let end = -1; for (const a of iv) if (a.s >= end){ tot++; end = a.e; }
+  }
+  if (capCache.size > 4000) capCache.clear();
+  capCache.set(ck, tot); return tot;
+}
+const chavesEscola = () => new Set(S.turmas.map(tlKey));
+function plEstimado(p, porH){ if (p.plModo === 'manual') return p.pl; let x = 0; for (const [hid, n] of porH){ const h = byId(S.horarios, hid); if (h && h.limite) x += n * (h.pl || 0) / h.limite; } return Math.round(x + 1e-9); }
+const limEf = p => Math.max(1, p.limite - ((S.folga || {})[p.nome] || 0));
 function freeSlots(p, h){ let f = 0; const tl = timeline(h); for (let d = 0; d < S.escola.dias; d++) for (const a of tl.aulas) if (!isBlocked(p, d, a.s, a.e)) f++; return f; }
 /* Distribui as turmas de uma disciplina entre os professores habilitados sem passar do limite de cada um.
    Cada turma fica inteira com um professor. Busca: decrescente por nº de aulas + melhor encaixe, com 300 tentativas
@@ -474,6 +491,8 @@ function distribuir(did){
   const items = S.turmas.filter(t => aulas(t, d) > 0).map(t => ({t, n: aulas(t, d), h: hOf(t)}));
   const ps = habilitados(did);
   const base = new Map(ps.map(p => [p.id, profLoad(p.id, did)]));
+  const escK = chavesEscola(), capAll = new Map(ps.map(p => [p.id, capRelogio(p, escK)]));
+  const baseK = new Map(ps.map(p => [p.id, new Set(S.turmas.filter(t => S.disciplinas.some(dd => dd.id !== did && profOf(t, dd) === p.id && aulas(t, dd) > 0)).map(tlKey))]));
   const baseT = new Map(ps.map(p => [p.id, S.turmas.filter(t => S.disciplinas.some(dd => dd.id !== did && profOf(t, dd) === p.id && aulas(t, dd) > 0)).length]));
   const capT = p => p.maxTurmas ? p.maxTurmas : Infinity;
   const baseH = new Map(ps.map(p => [p.id, new Map()]));
@@ -484,22 +503,26 @@ function distribuir(did){
   for (let it = 0; it < tries; it++){
     const key = new Map(items.map(x => [x, x.n + (it ? rnd() * 1.6 : 0)]));
     const order = items.slice().sort((a, b) => key.get(b) - key.get(a));
-    const load = new Map(base), nt = new Map(baseT), lh = new Map(ps.map(p => [p.id, new Map(baseH.get(p.id))])), asg = new Map(); let un = 0;
+    const load = new Map(base), nt = new Map(baseT), lh = new Map(ps.map(p => [p.id, new Map(baseH.get(p.id))])), lk = new Map(ps.map(p => [p.id, new Set(baseK.get(p.id))])), asg = new Map(); let un = 0;
     for (const x of order){
       let bp = null, bs = Infinity;
       for (const p of ps){
-        const rem = p.limite - load.get(p.id) - x.n; if (rem < 0) continue;
+        const lim = limEf(p), rem = lim - load.get(p.id) - x.n; if (rem < 0) continue;
         if (nt.get(p.id) + 1 > capT(p)) continue;
         const used = lh.get(p.id).get(x.h.id) || 0; if (used + x.n > free.get(p.id).get(x.h.id)) continue;
-        const fr = (load.get(p.id) + x.n) / p.limite;
+        // aulas precisam caber nos turnos do professor e aulas + PL precisam caber no horário da escola
+        const k2 = new Set(lk.get(p.id)); k2.add(tlKey(x.t));
+        const nl = load.get(p.id) + x.n; if (nl > capRelogio(p, k2)) continue;
+        const ph = new Map(lh.get(p.id)); ph.set(x.h.id, used + x.n); if (nl + plEstimado(p, ph) > capAll.get(p.id)) continue;
+        const fr = nl / lim;
         const sc = (equil ? fr * 10 : rem) - (used > 0 ? (equil ? 0.8 : 2) : 0) + (it ? rnd() * 1.5 : 0);
         if (sc < bs){ bs = sc; bp = p; }
       }
-      if (bp){ asg.set(x.t.id, bp.id); load.set(bp.id, load.get(bp.id) + x.n); nt.set(bp.id, nt.get(bp.id) + 1); const m = lh.get(bp.id); m.set(x.h.id, (m.get(x.h.id) || 0) + x.n); }
+      if (bp){ asg.set(x.t.id, bp.id); load.set(bp.id, load.get(bp.id) + x.n); nt.set(bp.id, nt.get(bp.id) + 1); lk.get(bp.id).add(tlKey(x.t)); const m = lh.get(bp.id); m.set(x.h.id, (m.get(x.h.id) || 0) + x.n); }
       else { asg.set(x.t.id, ''); un += x.n; }
     }
     const pairs = new Set(); for (const x of items){ const p = asg.get(x.t.id); if (p) pairs.add(p + '|' + x.h.id); }
-    let sq = 0; for (const p of ps){ const f = load.get(p.id) / p.limite; sq += f * f; }
+    let sq = 0; for (const p of ps){ const f = load.get(p.id) / limEf(p); sq += f * f; }
     const score = un * 1000 + pairs.size * 2 + (equil ? sq * 6 : -sq * 6);
     if (!best || score < best.score) best = {score, asg, un};
   }
@@ -508,7 +531,7 @@ function distribuir(did){
 }
 function distribuirTodas(){
   for (const t of S.turmas) for (const d of S.disciplinas) if (aulas(t, d) > 0) setAtrib(t.id, d.id, 'prof', '');
-  const cap = d => habilitados(d.id).reduce((s, p) => s + p.limite, 0);
+  const cap = d => habilitados(d.id).reduce((s, p) => s + limEf(p), 0);
   const order = S.disciplinas.slice().sort((a, b) => demanda(b) / Math.max(1, cap(b)) - demanda(a) / Math.max(1, cap(a)));
   let un = 0; for (const d of order) un += distribuir(d.id); return un;
 }
@@ -521,14 +544,17 @@ function criarFaltantes(){
     while (un > 0 && guard++ < 30){
       const t = semProfTurmas(d)[0]; if (!t) break;
       const k = habilitados(d.id).length + 1;
-      S.professores.push({id: nid('p'), maxTurmas: null, nome: `Professor(a) ${dLabel(d)} ${k}`, limite: hOf(t).limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [d.id], indisp: [], auto: true}); created++;
+      const np = {id: nid('p'), maxTurmas: null, nome: `Professor(a) ${dLabel(d)} ${k}`, limite: hOf(t).limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [d.id], indisp: [], auto: true};
+      S.professores.push(np); created++;
       un = distribuir(d.id);
+      if (!profLoad(np.id)){ S.professores = S.professores.filter(p => p !== np); created--; break; }
     }
   }
   return created;
 }
 /* Equipe automática: remove os professores genéricos ainda não editados, redistribui e cria só os que faltam */
-function ajustarEquipe(){
+function ajustarEquipe(manterFolga){
+  if (!manterFolga) S.folga = {};
   const rm = new Set(S.professores.filter(p => p.auto).map(p => p.id));
   if (rm.size){ S.professores = S.professores.filter(p => !rm.has(p.id)); for (const t in S.atrib) for (const d in S.atrib[t]) if (rm.has(S.atrib[t][d].prof)) S.atrib[t][d].prof = ''; }
   distribuirTodas(); const n = criarFaltantes();
@@ -594,25 +620,27 @@ function buildModel(){
     return u;
   });
   // PLs: cada um é uma atividade do professor sem turma; os fixos só podem ir no dia marcado
-  const PLs = [];
+  const PLs = [], ownM = profs.map(() => new Uint8Array(Math.max(1, U)).fill(1));
   if (U) profs.forEach((pr, pi) => {
-    const hs = new Set(); for (const t of S.turmas) for (const d of discs) if (aulas(t, d) > 0 && profOf(t, d) === pr.id) hs.add(hOf(t).id);
-    let us = range(0, U).filter(u => !hs.size || [...ivs[u].hs].some(h => hs.has(h)));
+    const hs = new Set(); for (const t of S.turmas) for (const d of discs) if (aulas(t, d) > 0 && profOf(t, d) === pr.id) hs.add(tlKey(t));
+    const own = new Uint8Array(Math.max(1, U)); for (let u = 0; u < U; u++) own[u] = (!hs.size || [...ivs[u].hs].some(h => hs.has(h))) ? 1 : 0;
+    ownM[pi] = own;
+    const us = range(0, U);
     let nf = 0;
     const fx = plFixEff(pr), tot = plTotal(pr);
     for (let d = 0; d < D; d++){ const n = fx[d] || 0; for (let k = 0; k < n; k++){ PLs.push({p: pi, d, cand: Int32Array.from(us.map(u => d * U + u))}); nf++; } }
     const all = []; for (let d = 0; d < D; d++) for (const u of us) all.push(d * U + u);
     for (let k = 0; k < Math.max(0, tot - nf); k++) PLs.push({p: pi, d: -1, cand: Int32Array.from(all)});
   });
-  return {D, U, uS, uE, ovLater, gapN, T, L, unav, PLs, plG: new Int32Array(PLs.length).fill(-1), nP: profs.length, nD: discs.length, pos: new Int32Array(L.length).fill(-1)};
+  return {D, U, uS, uE, ovLater, gapN, T, L, unav, ownM, PLs, plG: new Int32Array(PLs.length).fill(-1), nP: profs.length, nD: discs.length, pos: new Int32Array(L.length).fill(-1)};
 }
 
 function createSolver(){
-  const m = buildModel(), {D, U, uS, uE, ovLater, gapN, T, L, unav, PLs, plG, nP, nD, pos} = m;
+  const m = buildModel(), {D, U, uS, uE, ovLater, gapN, T, L, unav, ownM, PLs, plG, nP, nD, pos} = m;
   const PD = D * U, nPL = PLs.length;
   const RG = S.disciplinas.map(regraDisc), gemM = RG.map(r => r.g === 'sim' ? 1 : r.g === 'nao' ? 2 : 0), mxD = RG.map(r => r.mx);
   const occ = new Int16Array(Math.max(1, nP * PD));
-  const lday = new Int16Array(Math.max(1, nP * D)), pday = new Int16Array(Math.max(1, nP * D));
+  const lday = new Int16Array(Math.max(1, nP * D)), pday = new Int16Array(Math.max(1, nP * D)), pout = new Int16Array(Math.max(1, nP * D));
   const tc = new Float64Array(T.length), pdc = new Float64Array(Math.max(1, nP * D));
   const cnt = new Int16Array(nD), fst = new Int16Array(nD), snd = new Int16Array(nD), pres = new Int16Array(nD);
   let cur = 0, best = Infinity, bestSnap = null;
@@ -654,7 +682,7 @@ function createSolver(){
       if (prev < 0 || uE[u] > uE[prev]) prev = u;
     }
     const alone = (pday[p * D + d] > 0 && lday[p * D + d] === 0) ? 1 : 0;
-    return wantParts ? {clash, un, gaps, alone} : clash * W.clash + un * W.unav + gaps * W.gap + alone * W.plAlone;
+    return wantParts ? {clash, un, gaps, alone} : clash * W.clash + un * W.unav + gaps * W.gap + alone * W.plAlone + pout[p * D + d] * W.plFora;
   }
   const profDayCost = (p, d) => profDay(p, d, false);
   function total(){
@@ -664,9 +692,9 @@ function createSolver(){
     return c;
   }
   function rebuildOcc(){
-    occ.fill(0); lday.fill(0); pday.fill(0); pos.fill(-1);
+    occ.fill(0); lday.fill(0); pday.fill(0); pout.fill(0); pos.fill(-1);
     T.forEach(t => t.cont.forEach((l, i) => { if (l < 0) return; pos[l] = i; const p = L[l].p; if (p >= 0){ occ[p * PD + t.slots[i]]++; lday[p * D + ((t.slots[i] / U) | 0)]++; } }));
-    for (let k = 0; k < nPL; k++){ const g = plG[k]; if (g < 0) continue; const p = PLs[k].p; occ[p * PD + g]++; pday[p * D + ((g / U) | 0)]++; }
+    for (let k = 0; k < nPL; k++){ const g = plG[k]; if (g < 0) continue; const p = PLs[k].p; occ[p * PD + g]++; pday[p * D + ((g / U) | 0)]++; if (!ownM[p][g % U]) pout[p * D + ((g / U) | 0)]++; }
   }
   const snapshot = () => ({c: T.map(t => t.cont.slice()), g: plG.slice()});
   function restore(sn){ T.forEach((t, ti) => t.cont.set(sn.c[ti])); plG.set(sn.g); rebuildOcc(); cur = total(); }
@@ -696,8 +724,8 @@ function createSolver(){
     const po = range(0, nPL).sort((a, b) => (PLs[b].d >= 0) - (PLs[a].d >= 0) || PLs[a].cand.length - PLs[b].cand.length);
     for (const k of po){
       const {p, cand} = PLs[k]; let bg = -1, bs = Infinity;
-      for (const g of cand){ const d = (g / U) | 0; const s = profHit(p, g) + (lday[p * D + d] ? 0 : 8) + Math.random() * 3; if (s < bs){ bs = s; bg = g; } }
-      if (bg >= 0){ plG[k] = bg; occ[p * PD + bg]++; pday[p * D + ((bg / U) | 0)]++; }
+      for (const g of cand){ const d = (g / U) | 0; const s = profHit(p, g) + (lday[p * D + d] ? 0 : 8) + (ownM[p][g % U] ? 0 : 6) + Math.random() * 3; if (s < bs){ bs = s; bg = g; } }
+      if (bg >= 0){ plG[k] = bg; occ[p * PD + bg]++; pday[p * D + ((bg / U) | 0)]++; if (!ownM[p][bg % U]) pout[p * D + ((bg / U) | 0)]++; }
     }
     cur = total(); best = cur; bestSnap = snapshot();
   }
@@ -727,7 +755,7 @@ function createSolver(){
       cur += delta;
     } else swapRaw(ti, i, j);
   }
-  function movePL(k, g){ const p = PLs[k].p, o = plG[k]; occ[p * PD + o]--; pday[p * D + ((o / U) | 0)]--; occ[p * PD + g]++; pday[p * D + ((g / U) | 0)]++; plG[k] = g; }
+  function movePL(k, g){ const p = PLs[k].p, o = plG[k], d1 = (o / U) | 0, d2 = (g / U) | 0; occ[p * PD + o]--; pday[p * D + d1]--; if (!ownM[p][o % U]) pout[p * D + d1]--; occ[p * PD + g]++; pday[p * D + d2]++; if (!ownM[p][g % U]) pout[p * D + d2]++; plG[k] = g; }
   function attemptPL(k, temp){
     const pl = PLs[k], g = pl.cand[(Math.random() * pl.cand.length) | 0], o = plG[k];
     if (g === o || o < 0) return;
@@ -830,10 +858,11 @@ function validar(){
       iv.sort((a, b) => a.e - b.e); let end = -1;
       for (const a of iv) if (a.s >= end){ maxAll++; end = a.e; }
     }
-    const need = x.tot + nPL;
-    if (need > maxAll){ errs.push(`${p.nome}: ${x.tot} aulas + ${nPL} PLs, mas só cabem ${maxAll} atividades nos horários em que está disponível.`); continue; }
+    const capE = capRelogio(p, chavesEscola());
+    if (x.tot > maxAll){ errs.push(`${p.nome}: ${x.tot} aulas, mas só cabem ${maxAll} nos turnos e horários em que está disponível.`); continue; }
+    if (x.tot + nPL > capE){ errs.push(`${p.nome}: ${x.tot} aulas + ${nPL} PLs não cabem nos ${capE} horários da escola. Reduza os PLs do período ou as aulas por turma.`); continue; }
     for (let d = 0; d < D; d++){ const f = fxE[d] || 0; if (!f) continue; let cap = 0;
-      const iv = []; for (const kk of x.byH.keys()) for (const a of tlOfKey(kk).aulas) if (!blocked(d, a.s, a.e)) iv.push(a);
+      const iv = []; for (const kk of chavesEscola()) for (const a of tlOfKey(kk).aulas) if (!blocked(d, a.s, a.e)) iv.push(a);
       iv.sort((a, b) => a.e - b.e); let end = -1; for (const a of iv) if (a.s >= end){ cap++; end = a.e; }
       if (f > cap) errs.push(`${p.nome}: ${f} PLs fixos na ${DIAS[d].toLowerCase()}, mas só há ${cap} horários livres nesse dia.`); }
     for (const [kk, n] of x.byH){
@@ -1377,6 +1406,7 @@ function vResult(){
     return it.type === 'clash' ? `<li><b>Choque</b> · ${pn} · ${DIAS[it.d]}: ${it.ls.map(desc).join(' e ')}</li>` : `<li><b>Indisponível</b> · ${pn} · ${DIAS[it.d]}: ${desc(it.ls[0])}</li>`;
   }).join('');
   if (iss) h += `<ul class="issues">${iss}</ul>${rep.items.length > 14 ? `<p class="hint">…e mais ${rep.items.length - 14}.</p>` : ''}`;
+  if (ajusteMsg) h += `<p class="hint" style="color:var(--good)">${esc(ajusteMsg)}</p>`;
   if (rep.nClash || rep.nUnav) h += `<p class="hint">Ainda há conflitos. Tente “Melhorar esta versão” com mais tempo; se persistirem, a carga de algum professor provavelmente não cabe nos horários dele.</p>`;
   h += `<div class="row end"><div class="tabs" role="tablist">${[['turmas','Por turma'],['geral','Quadro geral'],['profs','Por professor']].map(([k, n]) => `<button class="tab" role="tab" data-k="tab" data-tab="${k}" aria-selected="${resTab === k}">${n}</button>`).join('')}</div>
     <button class="btn" data-k="copy" id="b-copy">Copiar para planilha</button></div>
@@ -1474,7 +1504,9 @@ async function copyText(txt, btn){
   try { await navigator.clipboard.writeText(txt); const o = btn.textContent; btn.textContent = 'Copiado'; setTimeout(() => { btn.textContent = o; }, 1600); }
   catch(e){ const fb = document.getElementById('fb'), ta = document.getElementById('fb-text'); ta.value = txt; fb.hidden = false; ta.focus(); ta.select(); }
 }
-async function gerar(cont){
+let ajusteMsg = '';
+async function gerar(cont, rodada){
+  if (!rodada) ajusteMsg = '';
   if (running) return;
   running = true; const myVer = ver;
   const solver = cont && R ? R.solver : createSolver();
@@ -1489,6 +1521,14 @@ async function gerar(cont){
   running = false;
   if (myVer !== ver){ render(); return; }
   R = {solver, m: solver.m, rep: solver.report(), at: new Date()}; sel = null;
+  if (!cont && autoOn() && (R.rep.nClash + R.rep.nUnav) > 0 && (rodada || 0) < 4){
+    // professores com conflito ganham folga (menos aulas) e a equipe é refeita
+    S.folga = S.folga || {};
+    const env = new Set(R.rep.items.filter(it => it.type !== 'exc').map(it => S.professores[it.p]?.nome).filter(Boolean));
+    for (const n of env){ const p = S.professores.find(x => x.nome === n); const menor = Math.min(...S.turmas.flatMap(t => S.disciplinas.filter(d => profOf(t, d) === p.id).map(d => aulas(t, d))).filter(x => x > 0), 99); S.folga[n] = (S.folga[n] || 0) + (menor < 99 ? menor : 1); }
+    ajustarEquipe(true); ajusteMsg = `Havia conflito com ${[...env].join(', ')}. A distribuição foi refeita para eliminar o conflito.`;
+    changed(); return gerar(false, (rodada || 0) + 1);
+  }
   render();
 }
 function toggleUnav(p, keys){
