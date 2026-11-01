@@ -56,6 +56,10 @@ def ascii_(txt):
 
 
 # ================================================================ Tabuleiro
+VERDE_PLANO = (0.10, 0.55, 0.20, 0.85)
+VERMELHO_PLANO = (0.80, 0.15, 0.15, 0.80)
+
+
 class Tabuleiro(Widget):
     def __init__(self, ao_lance, **kw):
         super().__init__(**kw)
@@ -66,6 +70,8 @@ class Tabuleiro(Widget):
         self.arraste = None          # (casa, x, y)
         self.ultimo = None
         self.seta = None
+        self.setas_extra = []        # [(uci, rgba, número ou None)] — setas do plano
+        self.marcas = []             # [(casa, rgba)] — casas destacadas (alvos)
         self.bind(pos=self.desenhar, size=self.desenhar)
 
     # ---- geometria
@@ -149,6 +155,13 @@ class Tabuleiro(Widget):
             # seta do melhor lance
             if self.seta and not self.arraste:
                 self._desenhar_seta(self.seta, L)
+            # plano: casas-alvo e setas numeradas
+            for casa, cor in self.marcas:
+                x, y = self._xy(casa)
+                Color(*cor)
+                Line(rectangle=(x + 2, y + 2, L - 4, L - 4), width=L * 0.05)
+            for uci, cor, num in self.setas_extra:
+                self._desenhar_seta(uci, L, cor, num)
             if self.arraste:
                 casa, ax, ay = self.arraste
                 peca = self.board.piece_at(casa)
@@ -168,7 +181,7 @@ class Tabuleiro(Widget):
             Color(0.1, 0.1, 0.1, 1)
             Rectangle(texture=cheio, pos=(px, py), size=cheio.size)
 
-    def _desenhar_seta(self, uci, L):
+    def _desenhar_seta(self, uci, L, cor=None, num=None):
         import math
         try:
             m = chess.Move.from_uci(uci)
@@ -180,12 +193,19 @@ class Tabuleiro(Widget):
         ang = math.atan2(y2 - y1, x2 - x1)
         cab = L * 0.42
         bx, by = x2 - cab * math.cos(ang), y2 - cab * math.sin(ang)
-        Color(*SETA)
+        Color(*(cor or SETA))
         Line(points=[x1, y1, bx, by], width=L * 0.08)
         p = ang + math.pi / 2
         w = L * 0.24
         Triangle(points=[x2, y2, bx + w * math.cos(p), by + w * math.sin(p),
                          bx - w * math.cos(p), by - w * math.sin(p)])
+        if num is not None:                       # número do passo no início da seta
+            r = L * 0.22
+            Color(*(cor or SETA))
+            Ellipse(pos=(x1 - r, y1 - r), size=(2 * r, 2 * r))
+            t = textura(str(num), L * 0.3, "Roboto")
+            Color(1, 1, 1, 1)
+            Rectangle(texture=t, pos=(x1 - t.width / 2, y1 - t.height / 2), size=t.size)
 
     # ---- toque
     def on_touch_down(self, t):
@@ -614,3 +634,37 @@ class TelaAnalise(Screen):
             bt.bind(size=lambda w, sz: setattr(w, "text_size", (sz[0] - dp(8), sz[1])))
             bt.bind(on_release=lambda _b, u=uci: self.jogar(chess.Move.from_uci(u)))
             self.caixa_exp.add_widget(bt)
+
+
+class TabuleiroPlano(Tabuleiro):
+    """Tabuleiro só para ver: posição do plano com setas verdes (seus passos) e vermelhas (dele)."""
+
+    def __init__(self, **kw):
+        super().__init__(lambda *_: None, **kw)
+
+    def mostrar(self, fen, passos, cuidado, girado=False):
+        self.board = chess.Board(fen)
+        self.girado = girado
+        self.setas_extra, self.marcas = [], []
+        for i, p in enumerate(passos, 1):
+            cam = p.get("caminho") or []
+            if len(cam) == 3:                       # rota em 2 lances: duas setas (b8→a6, a6→b4)
+                self.setas_extra.append((cam[0] + cam[1], VERDE_PLANO, i))
+                self.setas_extra.append((cam[1] + cam[2], VERDE_PLANO, None))
+            elif p.get("seta"):
+                self.setas_extra.append((p["seta"], VERDE_PLANO, i))
+            elif p.get("casa"):
+                self.marcas.append((chess.parse_square(p["casa"]), VERDE_PLANO))
+        for p in cuidado:
+            if p.get("seta"):
+                self.setas_extra.append((p["seta"], VERMELHO_PLANO, None))
+        self.desenhar()
+
+    def on_touch_down(self, t):
+        return False
+
+    def on_touch_move(self, t):
+        return False
+
+    def on_touch_up(self, t):
+        return False

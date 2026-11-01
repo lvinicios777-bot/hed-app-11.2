@@ -42,14 +42,14 @@ def fim_da_linha(b: chess.Board, pv_san: List[str], max_lances: int = 8,
             m = c.parse_san(san)
         except ValueError:
             break
-        capturas.append(c.is_capture(m))
+        capturas.append(c.is_capture(m) or c.gives_check(m))   # lances "não tranquilos"
         if ucis is not None:
             ucis.append(m.uci())
         c.push(m)
         jogados.append(san)
         if c.is_game_over():
             break
-    # não parar no meio de uma troca: volta até a última posição tranquila
+    # não parar no meio de uma troca nem com xeque pendente: volta até a última posição tranquila
     while len(jogados) > 1 and capturas[-1] and not c.is_game_over():
         c.pop()
         jogados.pop()
@@ -544,12 +544,184 @@ def _testes():
     # linha que termina numa captura sem recaptura: a análise volta à posição tranquila
     _, jog = fim_da_linha(esp, ["Nf6", "O-O", "Nxe4", "Re1", "Nd6", "Nxe5", "Be7", "Bf1", "Nxe5"])
     assert jog[-1] == "Bf1", jog
+    grun = chess.Board("rnbqkb1r/pppppp1p/5np1/8/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 1 3")
+    fim, jog = fim_da_linha(grun, ["d5", "Nf3", "Bg7", "Qb3", "dxc4", "Qxc4", "Be6", "Qb5+"])
+    assert jog[-1] == "Be6" and not fim.is_check(), jog                         # para antes do xeque
+    assert plano_de_jogo(grun, ["d5", "Nf3", "Bg7", "Qb3", "dxc4", "Qxc4", "Be6", "Qb5+"])["passos"]
+    # Índia do Rei: a ruptura temática ...e5 (apoiada pelo peão d6) vem antes de ...d5
+    kid = chess.Board("rnbq1rk1/ppp1ppbp/3p1np1/8/2PPP3/2N2N2/PP2BPPP/R1BQK2R b KQ - 1 6")
+    assert rupturas_lances(kid, chess.BLACK)[0]["txt"] == "...e5", rupturas_lances(kid, chess.BLACK)
+    assert rupturas_lances(kid, chess.BLACK, ["...c5"])[0]["txt"] == "...c5"      # o livro tem prioridade
+    pl = plano_de_jogo(esp, ["a6", "Ba4", "Nf6", "O-O", "Be7", "Re1", "b5", "Bb3"])
+    assert pl["passos"] and all(p["texto"] for p in pl["passos"]) and pl["objetivo"]
+    assert "o dama" not in str(pl) and "o torre" not in str(pl)
     assert a["linha_uci"][:2] == ["a7a6", "b5a4"] and a["balanco"] in ("compensa", "equilibrado", "não compensa")
     assert "A FAVOR" in texto_planos("a6", a)
     n = ajustar_notas({"estrutura": 6, "atividade": 5, "valor_opcao": 7, "eficiencia": 4,
                        "assimetria": 3}, a)
     assert all(0 <= v <= 10 for v in n.values())
     return True
+
+
+
+# ======================================================== plano de jogo concreto (para a tela Plano)
+NOME_PECA = {chess.KNIGHT: "o cavalo", chess.BISHOP: "o bispo", chess.ROOK: "a torre", chess.QUEEN: "a dama",
+             chess.KING: "o rei", chess.PAWN: "o peão"}
+CENTRO = (chess.D4, chess.E4, chess.D5, chess.E5, chess.C4, chess.C5, chess.F4, chess.F5)
+
+
+def _vez(b: chess.Board, cor: bool) -> chess.Board:
+    c = b.copy(stack=False)
+    c.turn = cor
+    c.ep_square = None
+    return c
+
+
+def _passos(fim: chess.Board, cor: bool, limite: int = 4, preferidas: Optional[List[str]] = None) -> List[Dict]:
+    """Passos concretos para `cor` na posição `fim`: texto + seta (uci) para desenhar."""
+    c = _vez(fim, cor)
+    pre = "" if cor == chess.WHITE else "..."
+    out: List[Dict] = []
+
+    # 1. segurança do rei: roque ainda disponível
+    for m in c.legal_moves:
+        if c.is_castling(m):
+            lado = "pequeno" if chess.square_file(m.to_square) == 6 else "grande"
+            out.append({"texto": f"Faça o roque {lado} ({pre}{c.san(m)}): rei seguro e torre ativa",
+                        "seta": f"{chess.square_name(m.from_square)}{chess.square_name(m.to_square)}",
+                        "tema": "roque"})
+            break
+
+    # 2. pior peça para a casa ideal
+    lista = sorted((qualidade_peca(fim, s), s) for t in (chess.KNIGHT, chess.BISHOP, chess.QUEEN)
+                   for s in fim.pieces(t, cor))
+    for q, s in lista[:2]:
+        r = rota_ideal(fim, s)
+        if r:
+            casas = r["caminho"].split("–")
+            nome = NOME_PECA[fim.piece_at(s).piece_type]
+            via = f" (via {casas[1]})" if len(casas) == 3 else ""
+            if any(p.get("seta", "") and p["seta"][2:] == casas[-1] for p in out):
+                continue                                  # duas peças para a mesma casa: fica só a primeira
+            out.append({"texto": f"Leve {nome} de {casas[0]} para {casas[-1]}{via}: "
+                                 "sai de uma casa passiva para uma ativa",
+                        "seta": casas[0] + casas[-1], "caminho": casas, "tema": f"ativar {nome}"})
+
+    # 3. torre para coluna aberta/semiaberta
+    e = estrutura(fim, cor)
+    colunas = e["abertas"] + [x for x in e["semiabertas"] if x not in e["abertas"]]
+    for t in fim.pieces(chess.ROOK, cor):
+        if COLUNAS[chess.square_file(t)] in colunas:
+            break
+    else:
+        for col in colunas:
+            for t in fim.pieces(chess.ROOK, cor):
+                alvo = chess.square(COLUNAS.index(col), chess.square_rank(t))
+                if chess.Move(t, alvo) in c.legal_moves:
+                    tipo = "aberta" if col in e["abertas"] else "semiaberta"
+                    out.append({"texto": f"Torre {chess.square_name(t)} → {chess.square_name(alvo)}: "
+                                         f"ocupe a coluna {col} ({tipo})",
+                                "seta": chess.square_name(t) + chess.square_name(alvo),
+                                "tema": f"Pressionar pela coluna {col}"})
+                    break
+            else:
+                continue
+            break
+
+    # 4. peão passado ou ruptura
+    if e["passados"]:
+        s = chess.parse_square(e["passados"][-1])
+        frente = s + (8 if cor == chess.WHITE else -8)
+        if 0 <= frente < 64 and chess.Move(s, frente) in c.legal_moves:
+            out.append({"texto": f"Avance o peão passado ({pre}{chess.square_name(frente)}): "
+                                 "ele vira uma ameaça constante",
+                        "seta": chess.square_name(s) + chess.square_name(frente),
+                        "tema": "Promover o peão passado"})
+    for r in rupturas_lances(fim, cor, preferidas)[:1]:
+        out.append({"texto": f"Prepare a ruptura {r['txt']}: abre o jogo contra os peões dele",
+                    "seta": r["uci"], "tema": f"Abrir o jogo com a ruptura {r['txt']}"})
+
+    # 5. posto avançado livre para cavalo
+    for k in fim.pieces(chess.KNIGHT, cor):
+        for s in chess.SquareSet(chess.BB_KNIGHT_ATTACKS[k]):
+            if not fim.piece_at(s) and _posto_avancado(fim, s, cor) and not fim.is_attacked_by(not cor, s):
+                out.append({"texto": f"Cavalo para {chess.square_name(s)}: casa forte que peão nenhum expulsa",
+                            "seta": chess.square_name(k) + chess.square_name(s),
+                            "tema": f"Instalar um cavalo em {chess.square_name(s)}"})
+                break
+
+    # 6. alvo: peão fraco do adversário
+    d = estrutura(fim, not cor)
+    if d["isolados"]:
+        alvo = d["isolados"][0]
+        out.append({"texto": f"Alvo: o peão isolado de {alvo} — pressione com peças, ele não tem defesa de peão",
+                    "seta": None, "casa": alvo, "tema": f"Ganhar o peão fraco de {alvo}"})
+
+    vistos, unicos = set(), []
+    for p in out:
+        chave = p.get("seta") or p["texto"]
+        if chave not in vistos:
+            unicos.append(p)
+            vistos.add(chave)
+    return unicos[:limite]
+
+
+def rupturas_lances(b: chess.Board, cor: bool, preferidas: Optional[List[str]] = None) -> List[Dict]:
+    """Rupturas de peão; primeiro as citadas pelo livro, depois as que atacam peões centrais."""
+    c = _vez(b, cor)
+    pref = {x.replace("...", "") for x in (preferidas or [])}
+    out = []
+    for m in c.legal_moves:
+        p = c.piece_at(m.from_square)
+        if not p or p.piece_type != chess.PAWN or c.is_capture(m):
+            continue
+        d = c.copy(stack=False)
+        d.push(m)
+        alvo = [x for x in d.attacks(m.to_square) if d.piece_at(x) == chess.Piece(chess.PAWN, not cor)]
+        if alvo and (not d.is_attacked_by(not cor, m.to_square) or d.attackers(cor, m.to_square)):
+            nome = chess.square_name(m.to_square)
+            apoio_peao = any(d.piece_at(x) == chess.Piece(chess.PAWN, cor) for x in d.attackers(cor, m.to_square))
+            peso = (0 if nome in pref else 1, 0 if any(x in CENTRO for x in alvo) else 1,
+                    0 if apoio_peao else 1, 0 if d.attackers(cor, m.to_square) else 1)
+            out.append({"txt": ("" if cor == chess.WHITE else "...") + nome, "uci": m.uci(), "peso": peso})
+    out.sort(key=lambda r: r["peso"])
+    return out
+
+
+def plano_de_jogo(b: chess.Board, pv_san: List[str], analise: Optional[Dict] = None) -> Dict:
+    """Plano para a tela 'Plano': objetivo, passos com setas, o que vigiar, e a posição a desenhar."""
+    nos = b.turn
+    fim, _ = fim_da_linha(b, pv_san)
+    a = analise or {}
+    livro_rup = (a.get("fco") or {}).get("rupturas", [])
+    passos = _passos(fim, nos, preferidas=livro_rup)
+    cuidado = _passos(fim, not nos, limite=2)
+    for p in cuidado:
+        p["texto"] = "Ele quer: " + p["texto"][0].lower() + p["texto"][1:]
+    planos_txt = a.get("planos") or planos(fim, nos)
+    livro = [p for p in planos_txt if p.endswith("(FCO)")]
+    # objetivo: a ideia do livro, senão o tema estratégico mais forte entre os PRÓPRIOS passos
+    prioridade = ("Promover", "Ganhar", "Abrir o jogo", "Pressionar", "Instalar")
+    temas = [p["tema"] for p in passos if p.get("tema", "")[:1].isupper()]
+    tema = next((t for pref in prioridade for t in temas if t.startswith(pref)), None)
+    if livro:
+        objetivo = livro[0].replace(" (FCO)", "")
+        objetivo = objetivo[0].upper() + objetivo[1:] + " (ideia do livro)"
+    elif tema:
+        objetivo = tema
+    elif passos:
+        objetivo = "Completar o desenvolvimento e ativar as peças"
+    else:
+        objetivo = "Manter a posição sólida e esperar o erro do adversário"
+    pro, contra = a.get("pro", []), a.get("contra", [])
+    porque = []
+    if pro:
+        porque.append("a favor: " + ", ".join(pro[:2]))
+    if contra:
+        porque.append("cuidado: " + contra[0])
+    return {"fen": fim.fen(), "objetivo": objetivo, "passos": passos, "cuidado": cuidado,
+            "porque": "; ".join(porque), "ideias_livro": [p.replace(" (FCO)", "") for p in planos_txt
+                                                         if p.endswith("(FCO)")]}
 
 
 if __name__ == "__main__":

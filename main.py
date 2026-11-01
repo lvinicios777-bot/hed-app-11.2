@@ -30,7 +30,7 @@ from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO, 
 import hed_fontes as F
 import hed_auto as A
 import hed_livro as LV
-from hed_tabuleiro import TelaAnalise
+from hed_tabuleiro import TelaAnalise, TabuleiroPlano
 
 FEN_INICIAL = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -597,6 +597,171 @@ class TelaPosicao(Screen):
         app.ir("lista")
 
 
+# ---------------------------------------------------------------- Resumo (tela principal do resultado)
+CONFIANCA = {"A+": ("muito alta", (0.2, 0.6, 0.35, 1)), "A": ("alta", (0.2, 0.6, 0.35, 1)),
+             "B": ("boa", (0.25, 0.45, 0.75, 1)), "C": ("média", (0.75, 0.55, 0.15, 1)),
+             "D": ("baixa", (0.6, 0.2, 0.2, 1))}
+SELO = {"recomendado": ("RECOMENDADO", (0.2, 0.6, 0.35, 1)), "alternativa": ("BOA ALTERNATIVA", (0.25, 0.45, 0.75, 1)),
+        "possivel": ("POSSÍVEL", (0.35, 0.35, 0.35, 1)), "inferior": ("INFERIOR", (0.55, 0.45, 0.2, 1)),
+        "evitar": ("EVITAR", (0.6, 0.2, 0.2, 1))}
+
+
+def texto_quebrado(txt, tamanho="15sp", **kw):
+    lb = Label(text=txt, size_hint_y=None, halign="left", valign="top", font_size=tamanho, markup=True, **kw)
+    lb.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+            texture_size=lambda w, t: setattr(w, "height", t[1] + dp(4)))
+    return lb
+
+
+class TelaResumo(Screen):
+    def mostrar(self, r):
+        app = App.get_running_app()
+        self.clear_widgets()
+        raiz = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
+        corpo = GridLayout(cols=1, spacing=dp(8))
+        if "escolha" not in r:
+            corpo.add_widget(titulo("Ainda não dá para decidir"))
+            for a in r.get("avisos", []):
+                corpo.add_widget(texto_quebrado(seguro("• " + a)))
+        else:
+            nivel = r["ife"][0]
+            conf, cor = CONFIANCA[nivel]
+            corpo.add_widget(Label(text="JOGUE", font_size="16sp", size_hint_y=None, height=dp(24)))
+            corpo.add_widget(Label(text=f"[b]{r['escolha']}[/b]", markup=True, font_size="44sp",
+                                   size_hint_y=None, height=dp(60)))
+            caixa = Button(text=f"Confiança {conf}", background_normal="", background_color=cor,
+                           size_hint_y=None, height=dp(36), font_size="15sp")
+            corpo.add_widget(caixa)
+            corpo.add_widget(texto_quebrado(seguro(self._porque(r))))
+            corpo.add_widget(Label(text="[b]Os lances analisados[/b]", markup=True, size_hint_y=None,
+                                   height=dp(30)))
+            for c, selo, motivo in self._cartoes(r):
+                corpo.add_widget(self._cartao(c, selo, motivo))
+        raiz.add_widget(rolavel(corpo))
+        acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+        acoes.add_widget(botao("Voltar", lambda: app.ir("lista"), CINZA))
+        acoes.add_widget(botao("Detalhes", app.mostrar_detalhes, AZUL))
+        if "escolha" in r:
+            acoes.add_widget(botao("Registrar", app.abrir_registrar, VERDE))
+        raiz.add_widget(acoes)
+        self.add_widget(raiz)
+
+    def _porque(self, r):
+        app = App.get_running_app()
+        esc = next(c for c in app.cands if c.lance == r["escolha"])
+        if r.get("empate"):
+            outros = [x for x in r["empate"] if x != esc.lance]
+            base = (f"{esc.lance} e {', '.join(outros)} ficaram praticamente empatados; "
+                    f"{esc.lance} é o de menor risco se a sua leitura estiver errada.")
+        elif r["ife"][1] is None:
+            base = f"{esc.lance} foi o único lance que passou em todos os critérios."
+        else:
+            base = f"{esc.lance} tem a melhor combinação entre a avaliação do motor e o seu estilo."
+        a = esc.analise or {}
+        pros = [x for x in a.get("pro", []) if "plano(s) claro(s)" not in x]
+        if pros:
+            base += " A favor: " + ", ".join(pros[:2]) + "."
+        if a.get("fco"):
+            base += f" Livro: {a['fco']['capitulo']} ({a.get('fco_tom', '')})."
+        if r["ife"][0] == "D":
+            base += " Os lances empatados são equivalentes na prática: não gaste relógio aqui."
+        return base
+
+    def _cartoes(self, r):
+        app = App.get_running_app()
+        elim = dict(r.get("eliminados", []))
+        empat = set(r.get("empate", []))
+        dom = set(r.get("dominados", []))
+        U = r.get("U", {})
+        ordem = sorted(app.cands, key=lambda c: (c.lance != r["escolha"], c.lance in elim, -U.get(c.lance, -99)))
+        out = []
+        def util(lista):
+            return [x for x in lista if "plano(s) claro(s)" not in x]
+
+        for c in ordem:
+            a = dict(c.analise or {})
+            a["pro"], a["contra"] = util(a.get("pro", [])), util(a.get("contra", []))
+            if c.lance == r["escolha"]:
+                selo, motivo = "recomendado", (a.get("pro") or ["melhor no conjunto"])[0]
+            elif c.lance in elim:
+                selo, motivo = "evitar", elim[c.lance]
+            elif c.lance in dom:
+                selo, motivo = "inferior", "outro lance é melhor ou igual em tudo"
+            elif c.lance in empat:
+                selo, motivo = "alternativa", (a.get("pro") or ["praticamente igual ao recomendado"])[0]
+            else:
+                selo, motivo = "possivel", (a.get("contra") or ["um pouco abaixo no conjunto"])[0]
+            out.append((c, selo, motivo))
+        return out
+
+    def _cartao(self, c, selo, motivo):
+        app = App.get_running_app()
+        nome, cor = SELO[selo]
+        caixa = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(112), spacing=dp(2))
+        topo = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(6))
+        topo.add_widget(Label(text=f"[b]{c.lance}[/b]", markup=True, font_size="20sp", size_hint_x=0.3))
+        topo.add_widget(Button(text=nome, background_normal="", background_color=cor, font_size="13sp",
+                               size_hint_x=0.7))
+        caixa.add_widget(topo)
+        perda = "igual ao melhor do motor" if c.delta < 0.005 else f"{c.delta:.2f} peão abaixo do melhor do motor"
+        caixa.add_widget(texto_quebrado(seguro(f"{perda} · {motivo}"), "13sp"))
+        if c.analise:
+            caixa.add_widget(botao(f"Ver o plano com {c.lance}", lambda c=c: app.mostrar_plano(c), AZUL))
+        return caixa
+
+
+# ---------------------------------------------------------------- Plano de jogo de um lance
+class TelaPlano(Screen):
+    def mostrar(self, c):
+        import chess
+        from hed_plano import plano_de_jogo
+        app = App.get_running_app()
+        self.clear_widgets()
+        a = c.analise
+        b = chess.Board(a["fen"])
+        pl = plano_de_jogo(b, a["linha"].split(), a)
+        raiz = BoxLayout(orientation="vertical", padding=dp(8), spacing=dp(6))
+        corpo = GridLayout(cols=1, spacing=dp(6))
+        corpo.add_widget(titulo(f"Plano com {c.lance}"))
+        corpo.add_widget(texto_quebrado(seguro(f"Depois de: {a['linha']}"), "12sp"))
+        tab = TabuleiroPlano(size_hint_y=None, height=min(Window.width - dp(16), Window.height * 0.5))
+        tab.mostrar(pl["fen"], pl["passos"], pl["cuidado"], girado=(b.turn == chess.BLACK))
+        corpo.add_widget(tab)
+        corpo.add_widget(texto_quebrado(seguro(f"[b]Objetivo:[/b] {pl['objetivo']}"), "16sp"))
+        if pl["passos"]:
+            corpo.add_widget(texto_quebrado("[b][color=33cc55]Como fazer (setas verdes)[/color][/b]", "15sp"))
+            for i, p in enumerate(pl["passos"], 1):
+                corpo.add_widget(texto_quebrado(seguro(f"[b]{i}.[/b] {p['texto']}"), "14sp"))
+        else:
+            corpo.add_widget(texto_quebrado("[b][color=33cc55]Como fazer[/color][/b]", "15sp"))
+            corpo.add_widget(texto_quebrado("Sem passo concreto claro nesta posição: siga a linha do motor "
+                                            "(botão Linha no tabuleiro) e reavalie depois.", "14sp"))
+        if pl["cuidado"]:
+            corpo.add_widget(texto_quebrado("[b][color=ff5555]Vigie (setas vermelhas)[/color][/b]", "15sp"))
+            for p in pl["cuidado"]:
+                corpo.add_widget(texto_quebrado(seguro("• " + p["texto"]), "14sp"))
+        f = a.get("fco")
+        if f:
+            ideias = (" Ideias do livro: " + ", ".join(pl["ideias_livro"]) + ".") if pl["ideias_livro"] else ""
+            corpo.add_widget(texto_quebrado(seguro(
+                f"[b]Livro:[/b] {f['capitulo']} — {f['secao']} (tom: {a.get('fco_tom', '—')}).{ideias}"), "14sp"))
+            self.trecho = texto_quebrado("", "13sp")
+            corpo.add_widget(botao("Ler o trecho do livro", lambda: self._trecho(f), CINZA))
+            corpo.add_widget(self.trecho)
+        raiz.add_widget(rolavel(corpo))
+        acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+        acoes.add_widget(botao("Voltar", lambda: app.ir("resumo"), CINZA))
+        acoes.add_widget(botao("Linha no tabuleiro", lambda: app.sm.get_screen("planos").ver_linha(c), AZUL))
+        raiz.add_widget(acoes)
+        self.add_widget(raiz)
+
+    def _trecho(self, f):
+        if self.trecho.text:
+            self.trecho.text = ""
+        else:
+            self.trecho.text = seguro("\n\n".join("« " + t + " »" for t in f.get("trechos", [])[:2]))
+
+
 # ---------------------------------------------------------------- Planos
 class TelaPlanos(Screen):
     """Ficha de cada lance: a favor × contra, planos, casa ideal das peças, rupturas; linha no tabuleiro."""
@@ -873,7 +1038,8 @@ class HEDApp(App):
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
                           ("registrar", TelaRegistrar), ("registro", TelaRegistro),
                           ("posicao", TelaPosicao), ("config", TelaConfig), ("analise", TelaAnalise),
-                          ("tf", TelaTF), ("planos", TelaPlanos)):
+                          ("tf", TelaTF), ("planos", TelaPlanos), ("resumo", TelaResumo),
+                          ("plano", TelaPlano)):
             self.sm.add_widget(cls(name=nome))
         self.sm.current = "lista"
         return self.sm
@@ -943,10 +1109,22 @@ class HEDApp(App):
         self.ir("edicao")
 
     def mostrar_relatorio(self):
+        """Resultado da análise: primeiro o Resumo (claro e curto); os números ficam em Detalhes."""
         aval = None if self.aval_melhor is None else self.aval_melhor * 100
         r = analisar(self.cands, aval, self.mi_pp)
         self.ultimo = r if "escolha" in r else None
-        botoes = [("Voltar", lambda: self.ir("lista"), CINZA)]
+        self.sm.get_screen("resumo").mostrar(r)
+        self.ir("resumo")
+
+    def mostrar_plano(self, c):
+        self.sm.get_screen("plano").mostrar(c)
+        self.ir("plano")
+
+    def mostrar_detalhes(self):
+        aval = None if self.aval_melhor is None else self.aval_melhor * 100
+        r = analisar(self.cands, aval, self.mi_pp)
+        self.ultimo = r if "escolha" in r else None
+        botoes = [("Voltar", lambda: self.ir("resumo"), CINZA)]
         if any(c.analise for c in self.cands):
             botoes.append(("Planos", self.mostrar_planos, AZUL))
         if self.ultimo:

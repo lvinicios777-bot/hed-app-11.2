@@ -70,6 +70,13 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.8 — Resumo e Plano de jogo
+
+- **Resumo** (abre ao tocar em Analisar): "JOGUE: lance", confiança em palavras (alta / boa / média / baixa), o porquê em uma frase e um cartão por lance (RECOMENDADO, BOA ALTERNATIVA, POSSÍVEL, INFERIOR, EVITAR) com o motivo principal. Os números técnicos ficam em **Detalhes**.
+- **Plano de jogo** (botão em cada cartão): tabuleiro com setas verdes numeradas (seus passos) e vermelhas (o que o adversário quer), objetivo, "como fazer" passo a passo (roque, rota da pior peça — inclusive em 2 lances —, torre para coluna aberta, peão passado, ruptura, posto avançado, alvo fraco), "vigie" e a linha do livro com o trecho sob demanda.
+- Rupturas: primeiro as citadas pelo livro, depois as que atacam o centro e têm apoio de peão (ex.: ...e5 na Índia do Rei).
+- A análise da linha também para antes de um xeque pendente, não só de trocas.
+
 ## Novidades da 11.1.2.7 — livro de aberturas do jogador
 
 - **Configurações → Carregar livro (escolher EPUB):** o app indexa o seu livro de aberturas (testado com o FCO) **no próprio celular**. O livro e seu texto nunca entram neste repositório: o app só traz o código que o lê.
