@@ -71,6 +71,11 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.11 — rede LD2 dentro do app
+- A rede LD2 do Lc0 já vem no APK (`redes/LD2.pb.gz`): o WDL do Lc0 funciona sem carregar nada.
+- "Trocar a rede do Lc0" continua em Configurações, opcional; a rede escolhida tem prioridade sobre a embutida.
+- O livro FCO não vem no APK (é obra protegida e o APK é público). Carregado uma vez, o índice fica guardado no app e continua nas atualizações.
+
 ## Novidades da 11.1.2.10 — Lc0 0.33 com a rede do jogador
 
 - **Lc0 v0.33.0-rc0** (binário oficial para Android, GPL v3 — ver `motores/LEIA-ME.md`) vai no APK junto do Stockfish.

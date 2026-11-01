@@ -3,11 +3,11 @@ title = HED 11.1.2
 package.name = hed
 package.domain = org.lucas
 source.dir = .
-source.include_exts = py,png,jpg,kv,json
+source.include_exts = py,png,jpg,kv,json,gz
 source.exclude_dirs = .github, bin, .buildozer, sf, libs, motores
-version = 11.1.2.10
+version = 11.1.2.11
 # versionCode sempre crescente (11.2.1 = 924110201) para instalar por cima sem perder os dados
-android.numeric_version = 924110300
+android.numeric_version = 924110310
 requirements = python3,kivy==2.3.0,chess,certifi
 orientation = portrait
 fullscreen = 0

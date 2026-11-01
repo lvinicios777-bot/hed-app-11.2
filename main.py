@@ -87,6 +87,9 @@ def campo(texto="", filtro=None):
     return TextInput(text=texto, multiline=False, input_filter=filtro, size_hint_y=None, height=ALTURA)
 
 
+REDE_EMBUTIDA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "redes", "LD2.pb.gz")
+
+
 def escolher_epub(pasta_destino, ao_terminar, nome="livro.epub"):
     """Abre o seletor de arquivos do Android e copia o arquivo escolhido para a pasta do app."""
     try:
@@ -952,14 +955,11 @@ class TelaConfig(Screen):
         self.fonte_wdl = Spinner(text=c.get("wdl", "Lc0"), values=["Lc0", "Stockfish"], size_hint_y=None,
                                  height=ALTURA)
         corpo.add_widget(self.fonte_wdl)
-        rede = app.arquivo_rede_lc0
-        self.status_lc0 = rotulo(
-            ("Rede carregada: " + f"{os.path.getsize(rede) / 1e6:.1f} MB") if os.path.isfile(rede)
-            else "Nenhuma rede carregada (ex.: LD2.pb.gz).", font_size="12sp")
+        self.status_lc0 = rotulo(app.texto_rede_lc0(), font_size="12sp")
         corpo.add_widget(self.status_lc0)
         if app.lc0_erro:
             corpo.add_widget(rotulo(f"Último erro do Lc0: {app.lc0_erro}", font_size="12sp"))
-        corpo.add_widget(botao("Carregar rede do Lc0 (.pb.gz)", self.escolher_rede, AZUL))
+        corpo.add_widget(botao("Trocar a rede do Lc0 (opcional, .pb.gz)", self.escolher_rede, AZUL))
         corpo.add_widget(botao("Testar Lc0", self.testar_lc0, AZUL))
 
         corpo.add_widget(Label(text="[b]Livro de aberturas (EPUB, ex.: FCO)[/b]", markup=True,
@@ -995,7 +995,7 @@ class TelaConfig(Screen):
         def pronto(caminho, erro):
             if caminho:
                 app.fechar_lc0()                       # reinicia o Lc0 com a rede nova
-                self.status_lc0.text = f"Rede carregada: {os.path.getsize(caminho) / 1e6:.1f} MB"
+                self.status_lc0.text = app.texto_rede_lc0()
             else:
                 self.status_lc0.text = f"Não carregada: {erro}"
         escolher_epub(app.user_data_dir, pronto, nome="lc0_rede.pb.gz")
@@ -1008,7 +1008,7 @@ class TelaConfig(Screen):
 
         def trabalho():
             app.fechar_lc0()
-            txt = F.diagnostico_lc0(app.arquivo_rede_lc0)
+            txt = F.diagnostico_lc0(app.rede_lc0())
             Clock.schedule_once(lambda dt: tela.mostrar(txt, [("Voltar", lambda: app.ir("config"), CINZA)]))
         threading.Thread(target=trabalho, daemon=True).start()
 
@@ -1104,6 +1104,19 @@ class HEDApp(App):
                         self.motor_erro = f"{type(e).__name__}: {e}"
             return self.motor
 
+    def rede_lc0(self):
+        """Rede escolhida pelo jogador, senão a LD2 que vem dentro do app."""
+        if os.path.isfile(self.arquivo_rede_lc0):
+            return self.arquivo_rede_lc0
+        return REDE_EMBUTIDA if os.path.isfile(REDE_EMBUTIDA) else None
+
+    def texto_rede_lc0(self):
+        r = self.rede_lc0()
+        if not r:
+            return "Nenhuma rede encontrada."
+        origem = "LD2, já vem no app" if r == REDE_EMBUTIDA else "escolhida por você"
+        return f"Rede: {origem} ({os.path.getsize(r) / 1e6:.1f} MB)"
+
     def obter_lc0(self):
         """Lc0 com a rede do jogador (WeightsFile); None se faltar binário ou rede."""
         with self._trava_lc0:
@@ -1111,12 +1124,12 @@ class HEDApp(App):
                 caminho = F.caminho_lc0()
                 if not caminho:
                     self.lc0_erro = "binário do Lc0 não encontrado"
-                elif not os.path.isfile(self.arquivo_rede_lc0):
-                    self.lc0_erro = "rede não carregada (Configurações → Carregar rede do Lc0)"
+                elif not self.rede_lc0():
+                    self.lc0_erro = "rede do Lc0 não encontrada"
                 else:
                     try:
                         self.lc0 = F.MotorVivo(caminho, nome="Lc0",
-                                               opcoes={"WeightsFile": self.arquivo_rede_lc0, "Threads": "2"})
+                                               opcoes={"WeightsFile": self.rede_lc0(), "Threads": "2"})
                         self.lc0_erro = ""
                     except Exception as e:
                         self.lc0, self.lc0_erro = None, f"{type(e).__name__}: {e}"
