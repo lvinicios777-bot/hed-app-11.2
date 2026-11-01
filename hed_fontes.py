@@ -211,6 +211,57 @@ def caminho_stockfish() -> Optional[str]:
     return None
 
 
+def diagnostico_stockfish() -> str:
+    """Relatório do que acontece ao procurar e iniciar o Stockfish (para a tela Configurações)."""
+    import time
+    L = ["DIAGNÓSTICO DO STOCKFISH", ""]
+    caminho = caminho_stockfish()
+    nativo = None
+    try:
+        from jnius import autoclass
+        act = autoclass("org.kivy.android.PythonActivity").mActivity
+        nativo = act.getApplicationInfo().nativeLibraryDir
+        L.append(f"Pasta de bibliotecas: {nativo}")
+        try:
+            L.append("Arquivos: " + ", ".join(sorted(os.listdir(nativo))))
+        except OSError as e:
+            L.append(f"Não consegui listar a pasta: {e}")
+    except Exception as e:
+        L.append(f"(fora do Android ou jnius indisponível: {e})")
+    alvo = caminho or (os.path.join(nativo, "libstockfish.so") if nativo else None)
+    if not alvo:
+        L.append("Stockfish: não encontrado em nenhum caminho.")
+        return "\n".join(L)
+    L.append(f"Caminho: {alvo}")
+    L.append(f"Existe: {os.path.isfile(alvo)} | executável: {os.access(alvo, os.X_OK)}"
+             + (f" | {os.path.getsize(alvo) / 1e6:.1f} MB" if os.path.isfile(alvo) else ""))
+    if not os.path.isfile(alvo):
+        return "\n".join(L)
+    try:
+        with open(alvo, "rb") as f:
+            cab = f.read(18)
+        tipo = int.from_bytes(cab[16:18], "little")
+        L.append(f"Formato ELF: {'PIE (correto)' if tipo == 3 else 'estático não-PIE' if tipo == 2 else tipo}")
+    except OSError as e:
+        L.append(f"Não consegui ler o arquivo: {e}")
+    L.append("")
+    L.append("Iniciando o motor…")
+    try:
+        ini = time.time()
+        p = subprocess.Popen([alvo], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True)
+        out, err = p.communicate("uci\nisready\nquit\n", timeout=40)
+        linhas = [x for x in out.splitlines() if x.startswith(("id name", "uciok", "readyok"))]
+        L.append(f"Código de saída: {p.returncode} | {time.time() - ini:.1f}s")
+        L.append("Resposta: " + (" / ".join(linhas) or "(nenhuma)"))
+        if err.strip():
+            L.append("Erro do motor: " + err.strip()[:400])
+        L.append("RESULTADO: " + ("OK, o Stockfish funciona." if "uciok" in out else "FALHOU."))
+    except Exception as e:
+        L.append(f"RESULTADO: FALHOU ao executar — {type(e).__name__}: {e}")
+    return "\n".join(L)
+
+
 class Motor:
     def __init__(self, caminho: str, hash_mb: int = 64):
         self.caminho = caminho
@@ -311,7 +362,7 @@ class MotorVivo:
         self.ativo = True
         threading.Thread(target=self._ler, daemon=True).start()
         self._env("uci")
-        if not self._uciok.wait(10):
+        if not self._uciok.wait(30):
             raise FonteErro("o Stockfish não respondeu")
         threads = max(1, min(4, (os.cpu_count() or 2) - 1))
         self._env("setoption name UCI_ShowWDL value true")

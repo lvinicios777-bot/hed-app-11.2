@@ -726,8 +726,10 @@ class TelaConfig(Screen):
         corpo.add_widget(self.speeds)
 
         sf = F.caminho_stockfish()
-        corpo.add_widget(rotulo(f"Stockfish no aparelho: {'encontrado' if sf else 'não encontrado'}",
+        corpo.add_widget(rotulo(f"Stockfish no aparelho: {'encontrado' if sf else 'não encontrado'}"
+                                + (f" — último erro: {app.motor_erro}" if app.motor_erro else ""),
                                 font_size="12sp"))
+        corpo.add_widget(botao("Testar Stockfish", self.testar_motor, AZUL))
 
         raiz = BoxLayout(orientation="vertical")
         raiz.add_widget(rolavel(corpo))
@@ -736,6 +738,17 @@ class TelaConfig(Screen):
         acoes.add_widget(botao("Salvar", self.salvar, VERDE))
         raiz.add_widget(acoes)
         self.add_widget(raiz)
+
+    def testar_motor(self):
+        app = App.get_running_app()
+        tela = app.sm.get_screen("texto")
+        tela.mostrar("Testando o Stockfish… (até 40 s)", [("Voltar", lambda: app.ir("config"), CINZA)])
+        app.ir("texto")
+
+        def trabalho():
+            txt = F.diagnostico_stockfish()
+            Clock.schedule_once(lambda dt: tela.mostrar(txt, [("Voltar", lambda: app.ir("config"), CINZA)]))
+        threading.Thread(target=trabalho, daemon=True).start()
 
     def salvar(self):
         app = App.get_running_app()
@@ -762,6 +775,7 @@ class HEDApp(App):
         self.cfg, self.fen = dict(F.CFG_PADRAO), ""
         self.partida = {"inicio": FEN_INICIAL, "lances": [], "idx": 0}
         self.motor, self._trava_motor = None, threading.Lock()
+        self.motor_erro = ""
         self.carregar()
         self.sm = ScreenManager(transition=NoTransition())
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
@@ -777,11 +791,15 @@ class HEDApp(App):
         with self._trava_motor:
             if self.motor is None:
                 caminho = F.caminho_stockfish()
-                if caminho:
+                if not caminho:
+                    self.motor_erro = "binário não encontrado (veja Configurações → Testar Stockfish)"
+                else:
                     try:
                         self.motor = F.MotorVivo(caminho)
-                    except Exception:
+                        self.motor_erro = ""
+                    except Exception as e:
                         self.motor = None
+                        self.motor_erro = f"{type(e).__name__}: {e}"
             return self.motor
 
     def on_stop(self):

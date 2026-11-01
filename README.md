@@ -69,6 +69,12 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.6 — Stockfish no aparelho
+
+- O Stockfish passa a ser compilado como executável PIE (configuração oficial do Stockfish para Android). O build antigo forçava `-static`, gerando um executável estático não-PIE que não iniciava no celular — por isso o app caía na nuvem do Lichess (sem WDL).
+- O build agora falha se o binário não for PIE.
+- **Configurações → Testar Stockfish:** mostra pasta, arquivo, permissão, formato e a resposta do motor; o Tabuleiro mostra o motivo quando o motor não inicia.
+
 ## Novidades da 11.1.2.5 — tela Planos e estrutura em contexto
 
 - **Tela Planos** (botão no relatório): para cada lance, A FAVOR × CONTRA, balanço (compensa / equilibrado / não compensa), estrutura, espaço, peças, planos numerados, casa ideal das duas piores peças (caminho em até 2 lances) e rupturas de peão.

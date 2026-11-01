@@ -42,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: libs/arm64-v8a/libstockfish.so
-          key: stockfish-sf_19-arm64-api24
+          key: stockfish-sf_19-arm64-api24-pie
 
       - name: Compilar Stockfish 19 para Android arm64
         if: steps.cache-sf.outputs.cache-hit != 'true'
@@ -54,7 +54,8 @@ jobs:
           git clone --depth 1 --branch sf_19 https://github.com/official-stockfish/Stockfish sf
           cd sf/src
           make net
-          export LDFLAGS="-static -Wno-unused-command-line-argument"
+          # PIE dinâmico (padrão oficial do Stockfish para Android: -pie -static-libstdc++);
+          # o antigo "-static" gerava executável estático não-PIE, que não iniciava no aparelho
           make -j4 build ARCH=armv8 COMP=ndk CXX=aarch64-linux-android24-clang++
           make strip ARCH=armv8 COMP=ndk
           file stockfish
@@ -62,6 +63,16 @@ jobs:
           cd ../..
           mkdir -p libs/arm64-v8a
           cp sf/src/stockfish libs/arm64-v8a/libstockfish.so
+
+      - name: Conferir formato do Stockfish (precisa ser PIE para o Android)
+        run: |
+          file libs/arm64-v8a/libstockfish.so
+          python - <<'PY'
+          import struct
+          t = struct.unpack('<H', open('libs/arm64-v8a/libstockfish.so', 'rb').read(18)[16:18])[0]
+          print('tipo ELF:', t, '(3 = PIE)')
+          assert t == 3, 'Stockfish não é PIE: o Android não vai executá-lo'
+          PY
 
       - name: Cache do Buildozer
         uses: actions/cache@v4

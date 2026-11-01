@@ -295,7 +295,9 @@ class TelaAnalise(Screen):
                 m = app.obter_motor()
 
                 def pronto(dt):
-                    self.status.text = "" if m else "Stockfish indisponível: usando a nuvem do Lichess."
+                    erro = getattr(app, "motor_erro", "")
+                    self.status.text = "" if m else ("Stockfish indisponível: usando a nuvem do Lichess."
+                                                     + (f" ({erro})" if erro else ""))
                     self.atualizar()
                 Clock.schedule_once(pronto)
             threading.Thread(target=iniciar, daemon=True).start()
