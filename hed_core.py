@@ -48,6 +48,9 @@ EXTRA_MAX_PP = 2.0           # teto: eliminado se Δ > MI + EXTRA_MAX_PP
 SIGMA_NOTA = 1.0             # ruído típico de uma nota subjetiva (0–10)
 FAIXAS_PP = [(1.0, "equivalente"), (2.0, "excelente"), (3.0, "boa"), (5.5, "inferior")]
 MI_CP = 0.10                 # mantido só para compatibilidade com dados salvos da 11.2
+MI_ABERTURA = 2.0            # até o lance 12: diferenças do motor pesam menos dentro da teoria
+EXTRA_ABERTURA = 4.0         # teto na abertura = MI + 4 pp (o WDL do Stockfish separa demais as linhas)
+LANCE_ABERTURA = 12
 SIGMA_AUTO = 2.0             # ruído de uma nota estimada pelo app (erro sistemático > o seu)
 LIMIAR_GANHO = 70.0          # E ≥ 70% (≈ +2,3 peões): Eficiência de Conversão entra no U
 KAPPA_CONV = 0.3             # U ganha 0,3 por ponto de Conversão acima de 5 quando ganhando
@@ -282,10 +285,16 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     if min(c.delta for c in ativos) > 0.10 + 1e-9:
         res["avisos"].append(f"O melhor lance do motor não está entre os candidatos "
                              f"(menor perda informada: {min(c.delta for c in ativos):.2f} peão).")
-    res.update(modo=modo, mi=mi_pp, E=E, rel=rel, unidade="pp")
+    # Fase de abertura (pelo FEN guardado na análise da continuação)
+    lances = [int(c.analise["fen"].split()[5]) for c in ativos if c.analise.get("fen")]
+    res["abertura"] = bool(lances) and min(lances) <= LANCE_ABERTURA
+    extra = EXTRA_MAX_PP
+    if res["abertura"]:
+        mi_pp, extra = max(mi_pp, MI_ABERTURA), EXTRA_ABERTURA
+    res.update(modo=modo, mi=mi_pp, E=E, rel=rel, unidade="pp", extra=extra)
 
     # 3. Admissão: dentro da MI é livre; além dela paga λ por pp, até o teto
-    teto = mi_pp + EXTRA_MAX_PP
+    teto = mi_pp + extra
     admit = []
     for c in ativos:
         if rel[c.lance] > teto + 1e-9:
@@ -420,8 +429,11 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
         return "\n".join(L)
 
     L.append(f"Perda medida em pp de pontuação esperada, via {r['modo']}")
-    L.append(f"MI {r['mi']:.1f} pp (livre) | teto {r['mi'] + EXTRA_MAX_PP:.1f} pp | "
+    L.append(f"MI {r['mi']:.1f} pp (livre) | teto {r['mi'] + r['extra']:.1f} pp | "
              f"preço {LAMBDA:.1f} ATP por pp além da MI")
+    if r.get("abertura"):
+        L.append(f"Fase de abertura (até o lance {LANCE_ABERTURA}): MI e teto maiores — diferenças pequenas "
+                 "do motor entre linhas teóricas não eliminam lances.")
     L.append("")
     L.append("CANDIDATOS")
     for c in sorted(r["ativos"], key=lambda c: r["rel"][c.lance]):
@@ -438,6 +450,9 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
             L.append(f"     Peças: {a['pecas']}")
             L.append(f"     Espaço (casas seguras): {a['espaco']}")
             L.append("     Planos: " + ("; ".join(a["planos"]) if a["planos"] else "sem plano estrutural claro"))
+            f = a.get("fco")
+            if f:
+                L.append(f"     FCO: {f['capitulo']} — {f['secao']} | tom: {a.get('fco_tom', '—')}")
             if a.get("balanco"):
                 L.append(f"     Balanço: {a['balanco']} ({len(a.get('pro', []))} a favor, "
                          f"{len(a.get('contra', []))} contra) — detalhes na tela Planos")
@@ -709,7 +724,16 @@ def _testes():
     r = analisar([ok1, ok2, fora])
     assert "Be3" in r["empate"] and r["escolha"] != "Be3", r["motivo"]
 
-    # 12. Sugestões só preenchem o que falta
+    # 12. Abertura: linha teórica 0,27 peão atrás (≈ 3,5 pp no WDL) não é eliminada
+    fen = "rnbqkb1r/pppppp1p/5np1/8/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 1 3"
+    g = Candidato("d5", 0.0, w=6, d=81, l=13, analise={"fen": fen}, **notas())
+    k = Candidato("Bg7", 0.27, w=4, d=78, l=18, analise={"fen": fen}, **notas())
+    r = analisar([g, k])
+    assert r["abertura"] and "Bg7" in [c.lance for c in r["ativos"]], r["eliminados"]
+    g.analise = k.analise = {"fen": fen.replace(" 1 3", " 1 20")}
+    assert any(l == "Bg7" for l, _ in analisar([g, k])["eliminados"])
+
+    # 13. Sugestões só preenchem o que falta
     c = aplicar_sugestoes(Candidato("exd5+"))
     assert c.reversibilidade == 3.0 and c.forcamento == 8.0 and c.fc is None
     return True

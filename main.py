@@ -29,6 +29,7 @@ from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO, 
                       RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro)
 import hed_fontes as F
 import hed_auto as A
+import hed_livro as LV
 from hed_tabuleiro import TelaAnalise
 
 FEN_INICIAL = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -84,6 +85,52 @@ def plural_notas(n):
 
 def campo(texto="", filtro=None):
     return TextInput(text=texto, multiline=False, input_filter=filtro, size_hint_y=None, height=ALTURA)
+
+
+def escolher_epub(pasta_destino, ao_terminar):
+    """Abre o seletor de arquivos do Android e copia o EPUB escolhido para a pasta do app."""
+    try:
+        from jnius import autoclass
+        from android import activity
+    except ImportError:
+        ao_terminar(None, "seletor disponível só no Android; use o campo de caminho")
+        return
+    Intent = autoclass("android.content.Intent")
+    PythonActivity = autoclass("org.kivy.android.PythonActivity")
+    pedido = 7341
+    destino = os.path.join(pasta_destino, "livro.epub")
+
+    def resultado(codigo, resposta, dados):
+        if codigo != pedido:
+            return
+        activity.unbind(on_activity_result=resultado)
+        if resposta != -1 or dados is None:
+            Clock.schedule_once(lambda dt: ao_terminar(None, "nenhum arquivo escolhido"))
+            return
+        try:
+            uri = dados.getData()
+            entrada = PythonActivity.mActivity.getContentResolver().openInputStream(uri)
+            versao = autoclass("android.os.Build$VERSION").SDK_INT
+            if versao >= 29:
+                saida = autoclass("java.io.FileOutputStream")(destino)
+                autoclass("android.os.FileUtils").copy(entrada, saida)
+                saida.close()
+            else:
+                Paths = autoclass("java.nio.file.Paths")
+                Files = autoclass("java.nio.file.Files")
+                Opcao = autoclass("java.nio.file.StandardCopyOption")
+                Files.copy(entrada, Paths.get(destino, []), [Opcao.REPLACE_EXISTING])
+            entrada.close()
+            Clock.schedule_once(lambda dt: ao_terminar(destino, None))
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            Clock.schedule_once(lambda dt: ao_terminar(None, msg))
+
+    activity.bind(on_activity_result=resultado)
+    intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+    intent.addCategory(Intent.CATEGORY_OPENABLE)
+    intent.setType("*/*")
+    PythonActivity.mActivity.startActivityForResult(intent, pedido)
 
 
 # ---------------------------------------------------------------- Lista
@@ -543,7 +590,8 @@ class TelaPosicao(Screen):
         ref = F.melhor_cp(self.resultado["opcoes"])
         import chess
         board = chess.Board(self.resultado["fen"])
-        app.cands = [F.para_candidato(o, ref, board) for o in ops]
+        livro = app.livro()
+        app.cands = [F.para_candidato(o, ref, board, livro) for o in ops]
         app.tf_ultimo = self.resultado.get("tf")
         app.salvar()
         app.ir("lista")
@@ -731,6 +779,24 @@ class TelaConfig(Screen):
                                 font_size="12sp"))
         corpo.add_widget(botao("Testar Stockfish", self.testar_motor, AZUL))
 
+        corpo.add_widget(Label(text="[b]Livro de aberturas (EPUB, ex.: FCO)[/b]", markup=True,
+                               size_hint_y=None, height=dp(36)))
+        ind = app.livro()
+        self.status_livro = rotulo(
+            f"Carregado: {len(ind['posicoes'])} posições indexadas" if ind else "Nenhum livro carregado.",
+            font_size="12sp")
+        corpo.add_widget(self.status_livro)
+        corpo.add_widget(botao("Carregar livro (escolher EPUB)", self.escolher_livro, AZUL))
+        self.caminho_livro = campo("")
+        self.caminho_livro.hint_text = "ou o caminho do arquivo .epub"
+        corpo.add_widget(self.caminho_livro)
+        corpo.add_widget(botao("Usar este caminho", lambda: self.indexar_livro(self.caminho_livro.text.strip()),
+                               CINZA))
+        nota = Label(text="O livro fica só neste celular: o app lê o seu arquivo e guarda um índice local.",
+                     font_size="12sp", size_hint_y=None, height=dp(36), halign="left", valign="middle")
+        nota.bind(size=lambda w, s: setattr(w, "text_size", s))
+        corpo.add_widget(nota)
+
         raiz = BoxLayout(orientation="vertical")
         raiz.add_widget(rolavel(corpo))
         acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8), padding=(dp(10), 0))
@@ -738,6 +804,31 @@ class TelaConfig(Screen):
         acoes.add_widget(botao("Salvar", self.salvar, VERDE))
         raiz.add_widget(acoes)
         self.add_widget(raiz)
+
+    def escolher_livro(self):
+        app = App.get_running_app()
+        self.status_livro.text = "Abrindo o seletor de arquivos…"
+        escolher_epub(app.user_data_dir, lambda caminho, erro: (
+            self.indexar_livro(caminho) if caminho else setattr(self.status_livro, "text", f"Não carregado: {erro}")))
+
+    def indexar_livro(self, caminho):
+        app = App.get_running_app()
+        if not caminho or not os.path.isfile(caminho):
+            self.status_livro.text = "Arquivo não encontrado."
+            return
+        self.status_livro.text = "Indexando o livro…"
+
+        def trabalho():
+            try:
+                ind = LV.indexar_epub(caminho, lambda t: Clock.schedule_once(
+                    lambda dt: setattr(self.status_livro, "text", t)))
+                LV.salvar_indice(ind, app.arquivo_livro)
+                txt = (f"Carregado: {len(ind['posicoes'])} posições indexadas "
+                       f"({ind['lances_lidos']} lances lidos).")
+            except Exception as e:
+                txt = f"Não consegui ler o livro: {type(e).__name__}: {e}"
+            Clock.schedule_once(lambda dt: setattr(self.status_livro, "text", txt))
+        threading.Thread(target=trabalho, daemon=True).start()
 
     def testar_motor(self):
         app = App.get_running_app()
@@ -766,6 +857,7 @@ class HEDApp(App):
 
     def build(self):
         self.arquivo = os.path.join(self.user_data_dir, "hed_dados.json")
+        self.arquivo_livro = os.path.join(self.user_data_dir, "livro_indice.json")
         self.cands, self.registro = [], []
         self.aval_melhor, self.mi_pp, self.indice = None, MI_PP, None
         self.tf = {}
@@ -805,6 +897,10 @@ class HEDApp(App):
     def on_stop(self):
         if self.motor:
             self.motor.fechar()
+
+    def livro(self):
+        """Índice do livro do jogador (None se nenhum livro foi carregado)."""
+        return LV.carregar_indice(self.arquivo_livro) if os.path.isfile(self.arquivo_livro) else None
 
     # ---- persistência
     def carregar(self):

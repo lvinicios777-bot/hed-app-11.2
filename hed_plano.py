@@ -261,7 +261,7 @@ def rupturas(b: chess.Board, cor: bool) -> List[str]:
         alvo = [x for x in d.attacks(m.to_square)
                 if d.piece_at(x) == chess.Piece(chess.PAWN, not cor)]
         if alvo and not d.is_attacked_by(not cor, m.to_square) or (alvo and d.attackers(cor, m.to_square)):
-            out.append(chess.square_name(m.to_square))
+            out.append(("" if cor == chess.WHITE else "...") + chess.square_name(m.to_square))
     return out[:3]
 
 
@@ -397,7 +397,10 @@ def analise_continuacao(b: chess.Board, pv_san: List[str]) -> Dict:
         pro.append("estrutura melhor que a do adversário")
     elif saldo_estrutura < -0.4:
         contra.append("estrutura pior que a do adversário")
-    if s1 - s1d >= 3:
+    abertura = b.fullmove_number <= 12
+    if abertura and abs(s1 - s1d) >= 3:
+        pass        # na abertura, ceder espaço pode ser o plano (aberturas hipermodernas): só informativo
+    elif s1 - s1d >= 3:
         pro.append(f"mais espaço ({s1} × {s1d})")
     elif s1d - s1 >= 3:
         contra.append(f"menos espaço ({s1} × {s1d})")
@@ -428,7 +431,7 @@ def analise_continuacao(b: chess.Board, pv_san: List[str]) -> Dict:
                  f"pior {p1['pior']}" + (" (pior peça melhorou)" if melhorou_pior else ""),
         "saldo_pecas": round(p1["media"] - q1["media"], 2),
         "melhorou_pior": melhorou_pior,
-        "espaco": f"{s1} × {s1d}",
+        "espaco": f"{s1} × {s1d}" + (" (na abertura: informativo)" if b.fullmove_number <= 12 else ""),
         "saldo_espaco": s1 - s1d,
         "planos": pl,
         "material": dif_material,
@@ -482,6 +485,19 @@ def texto_planos(lance: str, a: Dict) -> str:
         L += [f"  {r}" for r in a["rotas"]]
     if a.get("rupturas"):
         L.append("RUPTURAS DE PEÃO: " + ", ".join(a["rupturas"]))
+    f = a.get("fco")
+    if f:
+        L.append("")
+        L.append(f"LIVRO (FCO): {f['capitulo']} — {f['secao']}")
+        L.append(f"  Linha do livro: {f['linha']}")
+        L.append(f"  Tom do livro: {a.get('fco_tom', '—')}")
+        if f.get("trechos"):
+            L.append("  O que o livro diz:")
+            for t in f["trechos"][:2]:
+                L.append("  « " + (t if len(t) <= 600 else t[:600] + "…") + " »")
+    elif "fco" in a:
+        L.append("")
+        L.append("LIVRO (FCO): linha não encontrada no livro.")
     return "\n".join(L)
 
 

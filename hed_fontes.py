@@ -599,7 +599,7 @@ def melhor_cp(opcoes: List[Opcao]) -> Optional[int]:
     return max(v) if v else None
 
 
-def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
+def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None, livro: Optional[Dict] = None):
     """Converte uma Opcao em Candidato do HED (perda em peões vs melhor lance do motor).
 
     Leva a avaliação (para a pontuação esperada) e o WDL. Com a posição (`board`), as 10 notas
@@ -622,6 +622,8 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
                 from hed_plano import analise_continuacao, ajustar_notas
                 c.analise = analise_continuacao(board, o.pv)
                 c.analise["fen"] = board.fen()
+                if livro:
+                    _juntar_livro(c.analise, board, o.pv, livro)
                 notas = ajustar_notas(notas, c.analise)
             for k, v in notas.items():
                 setattr(c, k, v)
@@ -642,6 +644,34 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None):
     if o.lichess:
         c.n_lichess, c.pts_lichess = o.lichess.n, round(o.lichess.pts, 3)
     return c
+
+
+def _juntar_livro(analise: Dict, board: chess.Board, pv: List[str], livro: Dict) -> None:
+    """Acrescenta o que o livro do jogador (ex.: FCO) diz da linha: planos, rupturas e tom."""
+    from hed_livro import consultar, texto_tom
+    fco = consultar(livro, board, pv)
+    analise["fco"] = fco
+    if not fco:
+        return
+    for p in fco["planos"]:
+        rot = f"{p} (FCO)"
+        if rot not in analise["planos"]:
+            analise["planos"].append(rot)
+    for r in fco["rupturas"]:
+        if r not in analise.get("rupturas", []):
+            analise.setdefault("rupturas", []).append(r)
+    lado = "brancas" if board.turn == chess.WHITE else "pretas"
+    contra_lado = "pretas" if lado == "brancas" else "brancas"
+    if fco["tom"] == lado:
+        analise.setdefault("pro", []).append("o livro (FCO) vê esta linha melhor para você")
+    elif fco["tom"] == contra_lado:
+        analise.setdefault("contra", []).append("o livro (FCO) vê o adversário melhor nesta linha")
+    elif fco["tom"] == "duvidoso":
+        analise.setdefault("contra", []).append("o livro (FCO) considera a linha duvidosa")
+    pro, contra = len(analise.get("pro", [])), len(analise.get("contra", []))
+    analise["balanco"] = ("compensa" if pro - contra >= 2 else "equilibrado" if pro - contra >= 0
+                          else "não compensa")
+    analise["fco_tom"] = texto_tom(fco["tom"])
 
 
 def linha_texto(o: Opcao, ref_cp: Optional[int]) -> str:

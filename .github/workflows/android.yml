@@ -83,7 +83,7 @@ jobs:
           key: buildozer-v3-${{ hashFiles('buildozer.spec') }}
 
       - name: Testar núcleo
-        run: python hed_core.py && python hed_auto.py && python hed_plano.py
+        run: python hed_core.py && python hed_auto.py && python hed_plano.py && python hed_livro.py
 
       - name: Testar Lichess (nuvem, sem token — não bloqueia o build)
         continue-on-error: true

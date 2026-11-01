@@ -9,6 +9,7 @@ Versão 11.1.2: 11.1 + 11.1.1 + medição da 11.2, com regras de decisão fechad
 |---|---|
 | 'hed_core.py' | Núcleo: filtro, pontuação esperada, MI/λ/teto, Pareto, U, τ, MA, IFE, TOP (auditoria), TF × Conversão, registro e PR/CC/AC/RP |
 | 'hed_auto.py' | Notas estimadas pela posição e TF × Conversão automática pelo motor |
+| 'hed_livro.py' | Lê e indexa o livro de aberturas do jogador (EPUB) no celular e consulta as linhas |
 | 'hed_plano.py' | Análise da continuação: estrutura, peças, espaço e planos no fim da linha |
 | 'main.py' | Interface Android (Kivy) |
 | 'buildozer.spec' | Configuração do APK |
@@ -68,6 +69,14 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **Notas:** as 10 notas vêm estimadas pela posição e pelo WDL (`hed_auto.py`) e aparecem como "(auto)" na edição. Tocar ou arrastar confirma/ajusta e tira a marca. FC e Assimetria são as estimativas mais fracas: ajuste-as.
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
+
+## Novidades da 11.1.2.7 — livro de aberturas do jogador
+
+- **Configurações → Carregar livro (escolher EPUB):** o app indexa o seu livro de aberturas (testado com o FCO) **no próprio celular**. O livro e seu texto nunca entram neste repositório: o app só traz o código que o lê.
+- Cada linha principal do livro é reproduzida no tabuleiro; cada posição fica ligada à seção e aos parágrafos que o livro escreve sobre ela (`hed_livro.py`).
+- Na análise, a linha de cada candidato (lance + continuação do motor) é procurada no índice: capítulo/seção, tom do livro (quem está melhor), planos citados (marcados "(FCO)") e rupturas entram nos planos, no balanço e no Valor de opção; os trechos aparecem na tela Planos.
+- O livro é uma fonte entre três — motor, estatísticas do Lichess e livro — e nunca decide sozinho.
+- **Fase de abertura (até o lance 12):** MI de 2 pp e teto de 6 pp, para que linhas teóricas com pequena diferença no motor (ex.: Índia do Rei × Grünfeld) não sejam eliminadas; a diferença de espaço vira informação, não ponto contra (aberturas hipermodernas cedem espaço de propósito).
 
 ## Novidades da 11.1.2.6 — Stockfish no aparelho
 
