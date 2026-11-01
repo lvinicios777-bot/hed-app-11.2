@@ -1,0 +1,1377 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Grade Horária Escolar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: ficha de secretaria — cabeçalho com etapas numeradas, painéis de formulário, grades em células coloridas por disciplina */
+:root{
+  --bg:#edf1f3; --surface:#ffffff; --surface-2:#f4f7f8; --ink:#15212a; --muted:#566874; --line:#d3dce2;
+  --accent:#17607f; --accent-ink:#ffffff; --accent-soft:#dcecf3;
+  --good:#257a4a; --good-soft:#dff2e6; --warn:#9a5b06; --warn-soft:#fbefd8; --bad:#c23a2b; --bad-soft:#fbe3df;
+  --hatch:#dfe5e9; --chipL:93%; --chipC:0.055; --chipInk:#1a2830;
+  --f-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f161b; --surface:#162129; --surface-2:#1b2831; --ink:#e3ebf0; --muted:#93a6b2; --line:#2a3a45;
+  --accent:#5ab0d3; --accent-ink:#06151c; --accent-soft:#183746;
+  --good:#5cc489; --good-soft:#163222; --warn:#e2a548; --warn-soft:#3a2c14; --bad:#f07563; --bad-soft:#3d1f1b;
+  --hatch:#24333d; --chipL:33%; --chipC:0.05; --chipInk:#e8eff3; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#0f161b; --surface:#162129; --surface-2:#1b2831; --ink:#e3ebf0; --muted:#93a6b2; --line:#2a3a45;
+  --accent:#5ab0d3; --accent-ink:#06151c; --accent-soft:#183746;
+  --good:#5cc489; --good-soft:#163222; --warn:#e2a548; --warn-soft:#3a2c14; --bad:#f07563; --bad-soft:#3d1f1b;
+  --hatch:#24333d; --chipL:33%; --chipC:0.05; --chipInk:#e8eff3; color-scheme:dark }
+
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:1200px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.top{background:var(--surface);border-bottom:1px solid var(--line)}
+.brand{padding-block:22px 10px;display:flex;justify-content:space-between;align-items:flex-end;gap:8px 20px;flex-wrap:wrap}
+.brand > div{min-width:0}
+.eyebrow{font-family:var(--f-mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(1.45rem,3.2vw,2.05rem);line-height:1.1;margin:2px 0 0;letter-spacing:-.01em;text-wrap:balance;overflow-wrap:anywhere}
+.meta{font-family:var(--f-mono);font-size:.78rem;color:var(--muted)}
+nav.steps{display:flex;gap:2px;overflow-x:auto;scrollbar-width:thin}
+.step{appearance:none;background:none;border:0;border-bottom:3px solid transparent;padding:10px 12px 11px;font:inherit;font-size:.9rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.step:hover{color:var(--ink)}
+.step .num{font-family:var(--f-mono);font-size:.72rem;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center}
+.step[aria-current="step"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.step[aria-current="step"] .num{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.step .st{width:7px;height:7px;border-radius:50%}
+.st.ok{background:var(--good)} .st.warn{background:var(--warn)} .st.bad{background:var(--bad)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+main{padding-block:22px 72px;display:grid;gap:18px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;min-width:0;display:grid;gap:16px}
+.panel.subtle{background:var(--surface-2)}
+.panel-h{display:grid;gap:4px}
+h2{font-family:var(--f-display);font-weight:600;font-size:1.3rem;margin:0;text-wrap:balance}
+h3{font-family:var(--f-display);font-weight:600;font-size:1.05rem;margin:0}
+.lede{margin:0;color:var(--muted);max-width:68ch}
+.hint{margin:0;color:var(--muted);font-size:.86rem;max-width:72ch}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px 18px}
+.fld{display:grid;gap:5px;font-size:.85rem;color:var(--muted)}
+.fld > span{font-weight:500}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;min-width:0}
+input[type=number]{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+textarea{width:100%;min-height:90px;font-family:var(--f-mono);font-size:.8rem;box-sizing:border-box}
+.chk{display:flex;gap:10px;align-items:flex-start;font-size:.9rem;grid-column:1/-1}
+.chk input{margin-top:4px}
+.btn{appearance:none;font:inherit;font-size:.9rem;font-weight:500;border-radius:7px;padding:8px 14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--accent)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.pri:hover{filter:brightness(1.07)}
+.btn.ghost{background:none;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--bad)}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.row.end{justify-content:space-between}
+.tscroll{overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch}
+
+table.list{border-collapse:collapse;width:100%;font-size:.9rem}
+.list th{text-align:left;font-family:var(--f-mono);font-size:.7rem;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.list td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+.list tfoot td{border-bottom:0;font-family:var(--f-mono);font-size:.82rem}
+.list input[type=number]{width:62px}
+.list .num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.list .sm{font-size:.82rem;color:var(--muted)}
+.w-name{min-width:170px;width:100%}
+.w-sig{width:74px;text-transform:uppercase}
+
+.chip{display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:.74rem;padding:2px 8px;border-radius:99px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip.ok{background:var(--good-soft);color:var(--good)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.neu{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+
+/* horários (regimes) */
+.hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr));gap:14px}
+.hcard{border:1px solid var(--line);border-radius:9px;padding:14px;display:grid;gap:12px;min-width:0;background:var(--surface)}
+.hcard .hn{font-family:var(--f-display);font-weight:600;font-size:1.02rem;flex:1 1 180px}
+.hcard input[type=time]{font-family:var(--f-mono)}
+.hrow{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:flex-end}
+.hrow .fld input{width:110px}
+.ivs{display:grid;gap:6px}
+.iv{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
+.iv select{padding:5px 4px}
+.iv input{padding:5px 6px}
+.iv .ivn{width:120px}
+.iv .ivm{width:64px}
+.tl{display:flex;height:30px;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+.seg{min-width:0;display:grid;place-items:center;font-family:var(--f-mono);font-size:.68rem;background:var(--accent-soft);color:var(--ink);border-right:1px solid var(--surface);overflow:hidden;white-space:nowrap}
+.seg.brk{background:repeating-linear-gradient(45deg,var(--warn-soft) 0 4px,var(--surface) 4px 8px);color:var(--warn)}
+.seg:last-child{border-right:0}
+.tl-meta{display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:.74rem;color:var(--muted);gap:8px;flex-wrap:wrap}
+details.times summary{cursor:pointer;font-size:.85rem;color:var(--accent)}
+.tlist{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;font-size:.82rem;margin-top:8px;font-variant-numeric:tabular-nums}
+.tlist .b{color:var(--warn)}
+.tlist .t{font-family:var(--f-mono)}
+.seg-btns{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg-btns button{appearance:none;border:0;border-right:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-family:var(--f-mono);font-size:.85rem;padding:7px 12px;cursor:pointer}
+.seg-btns button:last-child{border-right:0}
+.seg-btns button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.durrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.durrow input{width:80px}
+
+/* matriz de atribuição */
+table.mx{border-collapse:separate;border-spacing:0;font-size:.85rem}
+.mx th,.mx td{border-bottom:1px solid var(--line);padding:6px 6px;vertical-align:top}
+.mx thead th{position:sticky;top:0;background:var(--surface);text-align:left;min-width:150px}
+.mx thead th .tn{font-family:var(--f-display);font-weight:600;font-size:.98rem}
+.mx thead th .rg{font-size:.74rem;color:var(--muted);display:block}
+.mx tbody th{text-align:left;font-weight:500;position:sticky;left:0;background:var(--surface);z-index:1;min-width:150px;box-shadow:1px 0 0 var(--line)}
+.mx .cl{display:flex;gap:4px;align-items:center}
+.mx .cl input{width:48px;padding:5px 6px}
+.mx .cl select{width:118px;padding:5px 4px;font-size:.8rem}
+.mx td.zero .cl{opacity:.38}
+.mx td.zero .cl:focus-within{opacity:1}
+.mx input.ov{border-color:var(--warn)}
+.dchips{display:flex;flex-wrap:wrap;gap:3px;min-width:220px;max-width:420px}
+.dchip{appearance:none;font-family:var(--f-mono);font-size:.7rem;padding:2px 7px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer}
+.dchip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.dem td{vertical-align:top}
+.qtab input[type=number]{width:62px}
+.w-ano{width:130px}
+.box{display:contents}
+.panel.banner{border-color:var(--warn);background:var(--warn-soft)}
+.autoP{font-style:italic;color:var(--accent)}
+.calc2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;align-items:start}
+@media (max-width:820px){.calc2{grid-template-columns:1fr}}
+.plc{display:grid;gap:5px;min-width:250px}
+.plc .pt{display:flex;gap:6px;align-items:center;font-size:.75rem;color:var(--muted)}
+.plc .pt input{width:56px}
+.plc .pt select{padding:4px 4px;font-size:.78rem}
+.plv{font-family:var(--f-mono);font-size:1rem;color:var(--ink)}
+.pfx{display:flex;gap:3px}
+.pfx label{display:grid;gap:1px;text-align:center;font-family:var(--f-mono);font-size:.62rem;color:var(--muted)}
+.pfx input{width:40px;padding:4px 3px;text-align:center}
+.pfx input.on{border-color:var(--accent);background:var(--accent-soft)}
+.gr td.pl{background:repeating-linear-gradient(135deg,var(--surface-2) 0 6px,var(--accent-soft) 6px 12px);color:var(--ink)}
+.dem .over{color:var(--bad);font-weight:600}
+.mx .rowp{margin-top:4px;width:100%;font-size:.75rem;padding:3px 4px;color:var(--muted)}
+
+/* indisponibilidade */
+.unav{display:grid;gap:10px;padding:6px 0 10px}
+table.ugrid{border-collapse:separate;border-spacing:3px 2px}
+.ugrid th{font-weight:500}
+.mini{appearance:none;border:0;background:none;font-family:var(--f-mono);font-size:.72rem;color:var(--muted);cursor:pointer;padding:2px 4px;border-radius:4px}
+.mini:hover{color:var(--accent);background:var(--accent-soft)}
+.ub{appearance:none;width:40px;height:22px;border-radius:5px;border:1px solid var(--line);background:var(--surface);cursor:pointer;font-family:var(--f-mono);color:var(--bad);font-size:.9rem}
+.ub.on{background:repeating-linear-gradient(45deg,var(--bad-soft) 0 5px,var(--surface) 5px 10px);border-color:var(--bad)}
+tr.tsep > *{padding-top:10px}
+
+/* checagens */
+.checks{display:grid;gap:6px;margin:0;padding:0;list-style:none;font-size:.88rem}
+.checks li{display:flex;gap:8px;align-items:flex-start}
+.checks li::before{content:"";flex:0 0 8px;height:8px;border-radius:50%;margin-top:7px;background:var(--good)}
+.checks li.warn::before{background:var(--warn)} .checks li.bad::before{background:var(--bad)}
+.bar{height:8px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.bar > i{display:block;height:100%;background:var(--accent);width:0}
+.prog{display:grid;gap:6px;font-family:var(--f-mono);font-size:.8rem;color:var(--muted)}
+
+/* resultados */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:2px;background:var(--surface)}
+.stat b{font-family:var(--f-mono);font-size:1.45rem;font-weight:500;font-variant-numeric:tabular-nums}
+.stat span{font-size:.8rem;color:var(--muted)}
+.stat.bad{border-color:var(--bad);background:var(--bad-soft)} .stat.bad b{color:var(--bad)}
+.stat.ok b{color:var(--good)}
+.stat.warn b{color:var(--warn)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;font:inherit;font-size:.9rem;padding:8px 12px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr));gap:16px}
+.card{border:1px solid var(--line);border-radius:9px;padding:12px;display:grid;gap:8px;min-width:0}
+.card-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.card-h h3{font-size:1.08rem}
+table.gr{border-collapse:separate;border-spacing:3px;width:100%;table-layout:fixed;min-width:460px}
+.gr th{font-family:var(--f-mono);font-size:.68rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:2px}
+.gr th.pl{width:84px;font-size:.64rem;letter-spacing:.02em;white-space:nowrap;text-align:right;padding-right:6px}
+.gr td{height:44px;border-radius:6px;padding:4px 6px;vertical-align:top;font-size:.78rem;line-height:1.25;overflow:hidden}
+.gr td.c{background:oklch(var(--chipL) var(--chipC) var(--h));color:var(--chipInk);cursor:pointer}
+.gr td.c:hover{box-shadow:inset 0 0 0 1px var(--accent)}
+.gr td.e{background:var(--surface-2);border:1px dashed var(--line);cursor:pointer}
+.gr td.x{background:none}
+.gr td.na{background:repeating-linear-gradient(45deg,var(--hatch) 0 5px,transparent 5px 10px)}
+.gr td.bad{box-shadow:inset 0 0 0 2px var(--bad)}
+.gr td.sel{box-shadow:inset 0 0 0 2px var(--accent),0 0 0 2px var(--accent-soft)}
+.gr .sg{font-family:var(--f-mono);font-weight:500;font-size:.78rem;display:block}
+.gr .pf{display:block;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gr tr.lunch td{height:auto;padding:0;text-align:center;font-family:var(--f-mono);font-size:.62rem;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+table.qg{min-width:0;width:auto}
+.qg td{min-width:92px;width:92px}
+.qg tr.dsep th,.qg tr.dsep td{border-top:2px solid var(--line)}
+.issues{margin:0;padding-left:18px;font-size:.86rem;display:grid;gap:3px}
+.fb{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding-block:14px calc(14px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));z-index:20;display:grid;gap:8px;box-shadow:0 -6px 20px rgb(0 0 0 / .12)}
+.foot-nav{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+@media (prefers-reduced-motion: no-preference){.bar > i{transition:width .2s linear}}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div><div class="eyebrow">Quadro de horários</div><h1 id="schoolTitle">Escola</h1></div>
+      <div class="meta" id="meta"></div>
+    </div>
+    <nav class="steps" id="steps" aria-label="Etapas"></nav>
+  </div>
+</header>
+<main class="wrap" id="main"></main>
+<div class="fb" id="fb" hidden>
+  <div class="row end"><b>Selecione o texto e copie (Ctrl+C)</b><button class="btn" data-k="closefb" id="fb-close">Fechar</button></div>
+  <textarea id="fb-text" readonly></textarea>
+</div>
+
+<script>
+/* ===================== Dados e utilidades ===================== */
+const KEY = 'grade-horaria-v3';
+const LIM_DEF = 18;
+const DIAS = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+const DIAS3 = ['Seg','Ter','Qua','Qui','Sex','Sáb'];
+const W = {clash:100, unav:80, exc:40, empty:6, dist:4, gap:3, gem:2, plAlone:5};
+
+let distMsg = '', hMsg = {};
+let S, R = null, step = 0, openProf = null, resTab = 'turmas', sel = null, resetArmed = false, running = false, ver = 0, pendingFocus = null;
+let idc = 0;
+const nid = p => p + '_' + Date.now().toString(36) + (++idc).toString(36);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const byId = (arr, id) => arr.find(x => x.id === id);
+const range = (a, b) => { const r = []; for (let i = a; i < b; i++) r.push(i); return r; };
+const first = s => (s || '').trim().split(/\s+/)[0] || '—';
+const toMin = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(s || ''); return m ? (+m[1]) * 60 + (+m[2]) : 420; };
+const hm = m => { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+const durTxt = m => { const h = Math.floor(m / 60), r = m % 60; return h ? (r ? `${h}h${String(r).padStart(2, '0')}` : `${h}h`) : `${r} min`; };
+
+/* Linha do tempo de um horário: aulas e pausas com minutos reais */
+function timeline(h){
+  const dur = S.escola.dur; let t = toMin(h.inicio);
+  const aulas = [], pausas = [];
+  const brs = (h.intervalos || []).filter(iv => iv.apos >= 1 && iv.apos < h.aulas && iv.min > 0).sort((a, b) => a.apos - b.apos);
+  for (let k = 0; k < h.aulas; k++){
+    aulas.push({k, s: t, e: t + dur}); t += dur;
+    for (const iv of brs) if (iv.apos === k + 1){ pausas.push({after: k, s: t, e: t + iv.min, nome: iv.nome || 'Intervalo', min: iv.min}); t += iv.min; }
+  }
+  return {aulas, pausas, ini: toMin(h.inicio), fim: t};
+}
+
+function sample(){
+  const H = [
+    {id:'h_pm',  nome:'Parcial · manhã',     inicio:'07:00', aulas:5, intervalos:[{apos:3, min:20, nome:'Recreio'}]},
+    {id:'h_pt',  nome:'Parcial · tarde',     inicio:'13:00', aulas:5, intervalos:[{apos:3, min:20, nome:'Recreio'}]},
+    {id:'h_i7m', nome:'Integral 7h · manhã', inicio:'07:00', aulas:7, intervalos:[{apos:3, min:20, nome:'Recreio'},{apos:5, min:60, nome:'Almoço'},{apos:6, min:20, nome:'Intervalo'}]},
+    {id:'h_i7t', nome:'Integral 7h · tarde', inicio:'12:30', aulas:7, intervalos:[{apos:3, min:20, nome:'Recreio'},{apos:5, min:50, nome:'Lanche'}]},
+    {id:'h_i9',  nome:'Integral 9h',         inicio:'07:00', aulas:9, intervalos:[{apos:3, min:20, nome:'Recreio'},{apos:5, min:60, nome:'Almoço'},{apos:7, min:10, nome:'Intervalo'}]},
+  ];
+  H.forEach(h => { h.limite = LIM_DEF; h.pl = 7; });
+  const D = [['LP','Língua Portuguesa',5,6,7],['MAT','Matemática',5,6,7],['CIE','Ciências',3,4,4],['HIS','História',3,3,3],
+    ['GEO','Geografia',3,3,3],['ING','Língua Inglesa',2,3,3],['ART','Arte',1,2,2],['EF','Educação Física',2,2,3],
+    ['ER','Ensino Religioso',1,1,1],['PV','Projeto de Vida',0,2,2],['EO','Estudo Orientado',0,3,4],['ELT','Eletiva',0,0,4],['PEX','Práticas Experimentais',0,0,2]];
+  const disciplinas = D.map(([s, n, p, i7, i9]) => ({id:'d_' + s, nome:n, sigla:s, carga:{h_pm:p, h_pt:p, h_i7m:i7, h_i7t:i7, h_i9:i9}}));
+  const turmas = [['6A','6º A','h_pm'],['7A','7º A','h_pm'],['6B','6º B','h_pt'],['8A','8º A','h_i7m'],['8B','8º B','h_i7t'],['9A','9º A','h_i9']].map(([k, n, h]) => ({id:'t_' + k, nome:n, h, ano:'a_' + k[0]}));
+  const P = [['ana','Ana Ribeiro','LP'],['bruno','Bruno Costa','LP'],['carla','Carla Mendes','MAT'],['diego','Diego Faria','MAT'],['elisa','Elisa Moraes','CIE'],['nadia','Nádia Freitas','CIE PEX'],
+    ['fabio','Fábio Nunes','HIS'],['gabriela','Gabriela Prado','GEO'],['helena','Helena Souza','ING'],['igor','Igor Lima','ART'],['julia','Júlia Rocha','EF'],['katia','Kátia Alves','ER'],
+    ['lucia','Lúcia Martins','PV EO'],['marcos','Marcos Teixeira','ELT PEX']];
+  // PL por área: Linguagens na quarta, Exatas/Natureza na terça, Humanas na quinta, parte diversificada na segunda
+  const AREA = {LP:2, ING:2, ART:2, EF:2, MAT:1, CIE:1, PEX:1, HIS:3, GEO:3, ER:3, PV:0, EO:0, ELT:0};
+  const professores = P.map(([k, n, ds]) => { const dd = ds.split(' '), fix = [0,0,0,0,0,0]; fix[AREA[dd[0]]] = 2;
+    return {id:'p_' + k, nome:n, limite:LIM_DEF, plModo:'auto', pl:0, plFix:fix, discs: dd.map(x => 'd_' + x), indisp:[]}; });
+  const cells = d => range(14, 40).map(x => d + '-' + hm(x * 30).replace(':', ''));
+  byId(professores, 'p_fabio').indisp = cells(4);
+  byId(professores, 'p_katia').indisp = [0, 2, 4].flatMap(cells);
+  const atrib = {};
+  return {escola:{nome:'Escola Municipal (exemplo)', dias:5, dur:50, maxDia:2, gem:true, tempo:6}, horarios:H, anos: anosPadrao(), turmas, disciplinas, professores, atrib};
+}
+const anosPadrao = () => ['6','7','8','9'].map(n => ({id:'a_' + n, nome:`${n}º ano`, curto:`${n}º`}));
+function newHorario(){ return {id: nid('h'), nome: 'Parcial · manhã', inicio: '07:00', aulas: 5, intervalos: [{apos: 3, min: 20, nome: 'Recreio'}], limite: LIM_DEF, pl: 0}; }
+function normalize(o){
+  o = o && typeof o === 'object' ? o : {};
+  o.escola = Object.assign({nome:'Minha escola', dias:5, dur:50, maxDia:2, gem:true, tempo:6}, o.escola || {});
+  o.escola.dur = Math.max(20, Math.min(120, parseInt(o.escola.dur, 10) || 50));
+  o.horarios = Array.isArray(o.horarios) ? o.horarios.filter(h => h && h.id) : [];
+  if (!o.horarios.length) o.horarios.push(newHorario());
+  o.horarios.forEach(h => {
+    h.nome = h.nome ?? ''; if (!/^\d{1,2}:\d{2}$/.test(h.inicio || '')) h.inicio = '07:00';
+    h.aulas = Math.max(1, Math.min(14, parseInt(h.aulas, 10) || 5));
+    h.limite = Math.max(1, Math.min(60, parseInt(h.limite, 10) || LIM_DEF));
+    h.pl = Math.max(0, Math.min(30, parseInt(h.pl, 10) || 0));
+    h.intervalos = (Array.isArray(h.intervalos) ? h.intervalos : []).map(iv => ({apos: parseInt(iv.apos, 10) || 1, min: Math.max(0, parseInt(iv.min, 10) || 0), nome: iv.nome ?? ''}));
+  });
+  o.turmas = Array.isArray(o.turmas) ? o.turmas.filter(t => t && t.id) : [];
+  o.anos = Array.isArray(o.anos) ? o.anos.filter(a => a && a.id) : anosPadrao();
+  o.anos.forEach(a => { a.nome = a.nome ?? ''; a.curto = a.curto ?? a.nome; });
+  o.turmas.forEach(t => { if (!byId(o.horarios, t.h)) t.h = o.horarios[0].id; t.nome = t.nome ?? ''; if (!byId(o.anos, t.ano)) t.ano = ''; });
+  o.disciplinas = Array.isArray(o.disciplinas) ? o.disciplinas.filter(d => d && d.id) : [];
+  o.disciplinas.forEach(d => { d.carga = d.carga && typeof d.carga === 'object' ? d.carga : {}; d.sigla = d.sigla ?? ''; d.nome = d.nome ?? ''; });
+  o.professores = Array.isArray(o.professores) ? o.professores.filter(p => p && p.id) : [];
+  o.professores.forEach(p => { p.indisp = (Array.isArray(p.indisp) ? p.indisp : []).filter(x => /^\d-\d{4}$/.test(x)); p.nome = p.nome ?? '';
+    p.limite = Math.max(1, Math.min(60, parseInt(p.limite, 10) || LIM_DEF));
+    p.pl = Math.max(0, Math.min(30, parseInt(p.pl, 10) || 0)); if (p.plModo !== 'manual') p.plModo = 'auto';
+    p.plFix = range(0, 6).map(d => Math.max(0, Math.min(14, parseInt((p.plFix || [])[d], 10) || 0)));
+    if (!Array.isArray(p.discs)){ p.discs = []; for (const t in (o.atrib || {})) for (const d in o.atrib[t]) if (o.atrib[t][d]?.prof === p.id && !p.discs.includes(d)) p.discs.push(d); } });
+  o.atrib = o.atrib && typeof o.atrib === 'object' ? o.atrib : {};
+  return o;
+}
+function loadSample(){ S = sample(); distribuirTodas(); S.exemplo = true; }
+const SAMPLE_T = ['t_6A','t_7A','t_6B','t_8A','t_8B','t_9A'];
+const ehExemplo = () => S.exemplo === true || (S.exemplo === undefined && SAMPLE_T.some(id => byId(S.turmas, id)));
+function bannerHTML(){
+  if (!ehExemplo()) return '';
+  return `<section class="panel banner"><div class="panel-h"><h3>Você está vendo uma escola de exemplo</h3>
+    <p class="hint">Ela já tem ${S.turmas.length} turmas e ${S.professores.length} professores. Por isso, se você digitar 10 turmas, o total vira ${S.turmas.length + 10}. Para montar a sua escola, comece do zero: os horários, disciplinas e anos ficam; turmas e professores são apagados.</p></div>
+    <div class="row"><button class="btn pri" data-k="minha" id="b-minha">Começar a minha escola</button><button class="btn" data-k="manterEx" id="b-manter">Continuar editando o exemplo</button></div></section>`;
+}
+function load(){ try { const raw = localStorage.getItem(KEY); if (raw){ S = normalize(JSON.parse(raw)); return; } } catch(e){} loadSample(); }
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e){} }
+function changed(){ ver++; R = null; sel = null; save(); renderSteps(); renderMeta(); }
+
+const hOf = t => byId(S.horarios, t.h) || S.horarios[0];
+const capacidade = h => h.aulas * S.escola.dias;
+function aulas(t, d){ const a = S.atrib[t.id]?.[d.id]; return (a && a.n != null && a.n !== '') ? +a.n : (+d.carga[t.h] || 0); }
+const profOf = (t, d) => S.atrib[t.id]?.[d.id]?.prof || '';
+function setAtrib(tid, did, key, val){ S.atrib[tid] ??= {}; S.atrib[tid][did] ??= {n:null, prof:''}; S.atrib[tid][did][key] = val; }
+const totalTurma = t => S.disciplinas.reduce((s, d) => s + aulas(t, d), 0);
+const hueOf = di => Math.round((200 + di * 137.508) % 360);
+function cellRange(){
+  let a = Infinity, b = -Infinity;
+  for (const h of S.horarios){ const tl = timeline(h); a = Math.min(a, tl.ini); b = Math.max(b, tl.fim); }
+  if (!isFinite(a)){ a = 420; b = 1080; }
+  return {a: Math.floor(a / 30) * 30, b: Math.ceil(b / 30) * 30};
+}
+
+/* ===================== Professores: carga, limite e distribuição ===================== */
+function profLoad(pid, exceptDid){ let n = 0; for (const t of S.turmas) for (const d of S.disciplinas){ if (d.id === exceptDid) continue; if (profOf(t, d) === pid) n += aulas(t, d); } return n; }
+/* horário principal do professor: onde ele tem mais aulas */
+function horarioPrincipal(p){ const c = new Map(); for (const t of S.turmas) for (const d of S.disciplinas) if (profOf(t, d) === p.id) c.set(t.h, (c.get(t.h) || 0) + aulas(t, d));
+  let best = null, bn = -1; for (const [h, n] of c) if (n > bn){ bn = n; best = h; } return best; }
+/* PL proporcional às aulas que o professor realmente tem: aulas × (PL da carga cheia ÷ limite), por horário */
+function aulasPorHorario(p){ const c = new Map(); for (const t of S.turmas) for (const d of S.disciplinas) if (profOf(t, d) === p.id){ const n = aulas(t, d); if (n) c.set(t.h, (c.get(t.h) || 0) + n); } return c; }
+function plCalc(p){ let x = 0; for (const [hid, n] of aulasPorHorario(p)){ const h = byId(S.horarios, hid); if (h && h.limite) x += n * (h.pl || 0) / h.limite; } return Math.round(x + 1e-9); }
+const plTotal = p => p.plModo === 'manual' ? p.pl : plCalc(p);
+/* fixos efetivos: o que foi marcado nos dias, cortado do fim da semana para trás se passar do total */
+function plFixEff(p){ const f = p.plFix.slice(0, S.escola.dias).map(x => +x || 0); let over = f.reduce((a, b) => a + b, 0) - plTotal(p);
+  for (let d = f.length - 1; d >= 0 && over > 0; d--){ const r = Math.min(over, f[d]); f[d] -= r; over -= r; } return f; }
+/* o valor digitado no horário vale para os professores daquele horário (e para quem ainda não tem turma) */
+function aplicarHorario(H, key, old){
+  let n = 0;
+  for (const p of S.professores){
+    const ph = horarioPrincipal(p);
+    if (ph === H.id || (!ph && (p[key] === old || S.horarios.length === 1))){ p[key] = H[key]; if (key === 'pl') ajustarFixos(p); n++; }
+  }
+  return n;
+}
+/* se o total de PLs ficar menor que os fixos, tira fixos do fim da semana para trás */
+function ajustarFixos(p){ let over = plFixos(p) - p.pl; for (let d = 5; d >= 0 && over > 0; d--){ const r = Math.min(over, p.plFix[d] || 0); p.plFix[d] -= r; over -= r; } }
+const plFixos = p => plFixEff(p).reduce((a, b) => a + b, 0);
+const habilitados = did => S.professores.filter(p => p.discs.includes(did));
+const demanda = d => S.turmas.reduce((s, t) => s + aulas(t, d), 0);
+function isBlocked(p, d, s, e){ return p.indisp.some(c => { if (+c[0] !== d) return false; const m = toMin(c.slice(2, 4) + ':' + c.slice(4)); return s < m + 30 && m < e; }); }
+function freeSlots(p, h){ let f = 0; const tl = timeline(h); for (let d = 0; d < S.escola.dias; d++) for (const a of tl.aulas) if (!isBlocked(p, d, a.s, a.e)) f++; return f; }
+/* Distribui as turmas de uma disciplina entre os professores habilitados sem passar do limite de cada um.
+   Cada turma fica inteira com um professor. Busca: decrescente por nº de aulas + melhor encaixe, com 300 tentativas
+   embaralhadas; vence a que deixa menos aulas sem professor e concentra cada professor em menos horários. */
+function rng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function distribuir(did){
+  const rnd = rng(12345);
+  const d = byId(S.disciplinas, did);
+  const items = S.turmas.filter(t => aulas(t, d) > 0).map(t => ({t, n: aulas(t, d), h: hOf(t)}));
+  const ps = habilitados(did);
+  const base = new Map(ps.map(p => [p.id, profLoad(p.id, did)]));
+  const baseH = new Map(ps.map(p => [p.id, new Map()]));
+  for (const t of S.turmas) for (const dd of S.disciplinas){ if (dd.id === did) continue; const pid = profOf(t, dd); if (baseH.has(pid)){ const m = baseH.get(pid); m.set(t.h, (m.get(t.h) || 0) + aulas(t, dd)); } }
+  const free = new Map(ps.map(p => [p.id, new Map(S.horarios.map(h => [h.id, freeSlots(p, h)]))]));
+  let best = null;
+  const tries = ps.length ? 300 : 1;
+  for (let it = 0; it < tries; it++){
+    const key = new Map(items.map(x => [x, x.n + (it ? rnd() * 1.6 : 0)]));
+    const order = items.slice().sort((a, b) => key.get(b) - key.get(a));
+    const load = new Map(base), lh = new Map(ps.map(p => [p.id, new Map(baseH.get(p.id))])), asg = new Map(); let un = 0;
+    for (const x of order){
+      let bp = null, bs = Infinity;
+      for (const p of ps){
+        const rem = p.limite - load.get(p.id) - x.n; if (rem < 0) continue;
+        const used = lh.get(p.id).get(x.h.id) || 0; if (used + x.n > free.get(p.id).get(x.h.id)) continue;
+        const sc = rem - (used > 0 ? 2 : 0) + (it ? rnd() * 1.5 : 0);
+        if (sc < bs){ bs = sc; bp = p; }
+      }
+      if (bp){ asg.set(x.t.id, bp.id); load.set(bp.id, load.get(bp.id) + x.n); const m = lh.get(bp.id); m.set(x.h.id, (m.get(x.h.id) || 0) + x.n); }
+      else { asg.set(x.t.id, ''); un += x.n; }
+    }
+    const pairs = new Set(); for (const x of items){ const p = asg.get(x.t.id); if (p) pairs.add(p + '|' + x.h.id); }
+    const score = un * 1000 + pairs.size;
+    if (!best || score < best.score) best = {score, asg, un};
+  }
+  for (const x of items) setAtrib(x.t.id, did, 'prof', best.asg.get(x.t.id) || '');
+  return best.un;
+}
+function distribuirTodas(){
+  for (const t of S.turmas) for (const d of S.disciplinas) if (aulas(t, d) > 0) setAtrib(t.id, d.id, 'prof', '');
+  const cap = d => habilitados(d.id).reduce((s, p) => s + p.limite, 0);
+  const order = S.disciplinas.slice().sort((a, b) => demanda(b) / Math.max(1, cap(b)) - demanda(a) / Math.max(1, cap(a)));
+  let un = 0; for (const d of order) un += distribuir(d.id); return un;
+}
+const semProfTurmas = d => S.turmas.filter(t => aulas(t, d) > 0 && !byId(S.professores, profOf(t, d)));
+function criarFaltantes(){
+  let created = 0;
+  for (const d of S.disciplinas){
+    if (!semProfTurmas(d).length) continue;
+    let un = distribuir(d.id), guard = 0;
+    while (un > 0 && guard++ < 30){
+      const t = semProfTurmas(d)[0]; if (!t) break;
+      const k = habilitados(d.id).length + 1;
+      S.professores.push({id: nid('p'), nome: `Professor(a) ${d.sigla || d.nome} ${k}`, limite: hOf(t).limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [d.id], indisp: [], auto: true}); created++;
+      un = distribuir(d.id);
+    }
+  }
+  return created;
+}
+/* Equipe automática: remove os professores genéricos ainda não editados, redistribui e cria só os que faltam */
+function ajustarEquipe(){
+  const rm = new Set(S.professores.filter(p => p.auto).map(p => p.id));
+  if (rm.size){ S.professores = S.professores.filter(p => !rm.has(p.id)); for (const t in S.atrib) for (const d in S.atrib[t]) if (rm.has(S.atrib[t][d].prof)) S.atrib[t][d].prof = ''; }
+  distribuirTodas(); const n = criarFaltantes();
+  distMsg = `Equipe ajustada: ${S.professores.length} professores` + (n ? ` (${n} criado${n > 1 ? 's' : ''} automaticamente).` : '.');
+}
+const autoOn = () => S.escola.autoProf !== false;
+function demandaInfo(d){
+  const byH = new Map(); for (const t of S.turmas){ const n = aulas(t, d); if (n) byH.set(t.h, (byH.get(t.h) || 0) + n); }
+  let fte = 0; for (const [hid, n] of byH) fte += n / (byId(S.horarios, hid)?.limite || LIM_DEF);
+  const un = semProfTurmas(d).reduce((s, t) => s + aulas(t, d), 0);
+  return {tot: demanda(d), byH, need: Math.ceil(fte - 1e-9), un};
+}
+
+/* ===================== Algoritmo ===================== */
+/* Cada aula de cada horário vira um intervalo de relógio. Choque de professor = dois intervalos dele que se sobrepõem. */
+function buildModel(){
+  const e = S.escola, D = e.dias, dur = e.dur;
+  const discs = S.disciplinas, profs = S.professores;
+  const TL = new Map(S.horarios.map(h => [h.id, timeline(h)]));
+  const usedH = [...new Set(S.turmas.map(t => hOf(t).id))];
+  const map = new Map(), ivs = [];
+  for (const hid of usedH) for (const a of TL.get(hid).aulas){
+    const key = a.s + '-' + a.e;
+    if (!map.has(key)){ map.set(key, ivs.length); ivs.push({s: a.s, e: a.e, hs: new Set()}); }
+    ivs[map.get(key)].hs.add(hid);
+  }
+  ivs.sort((x, y) => x.s - y.s || x.e - y.e);
+  const U = ivs.length, uS = ivs.map(x => x.s), uE = ivs.map(x => x.e);
+  const uIndex = new Map(ivs.map((x, i) => [x.s + '-' + x.e, i]));
+  const uOf = new Map(usedH.map(hid => [hid, TL.get(hid).aulas.map(a => uIndex.get(a.s + '-' + a.e))]));
+  const ovLater = ivs.map((x, u) => { const r = []; for (let v = u + 1; v < U; v++){ if (uS[v] < uE[u]) r.push(v); else break; } return r; });
+  // janelas: tempo ocioso entre duas atividades, descontando recreio/almoço; acima de 3h conta como troca de turno
+  const gapN = new Int16Array(Math.max(1, U * U));
+  for (let u = 0; u < U; u++) for (let v = u + 1; v < U; v++){
+    if (uS[v] < uE[u]) continue;
+    const idle = uS[v] - uE[u]; if (idle <= 0 || idle > 180) continue;
+    const bs = [];
+    for (const hid of new Set([...ivs[u].hs, ...ivs[v].hs])) for (const p of TL.get(hid).pausas){ const a = Math.max(p.s, uE[u]), b = Math.min(p.e, uS[v]); if (b > a) bs.push([a, b]); }
+    bs.sort((x, y) => x[0] - y[0]); let cov = 0, ca = -1, cb = -1;
+    for (const [a, b] of bs){ if (a > cb){ if (cb > ca) cov += cb - ca; ca = a; cb = b; } else cb = Math.max(cb, b); }
+    if (cb > ca) cov += cb - ca;
+    const rem = idle - cov; if (rem >= dur * 0.6) gapN[u * U + v] = Math.round(rem / dur);
+  }
+  const L = [];
+  const T = S.turmas.map((t, ti) => {
+    const h = hOf(t), tl = TL.get(h.id), uo = uOf.get(h.id), n = tl.aulas.length;
+    const adj = tl.aulas.map((a, k) => k < n - 1 && (tl.aulas[k + 1].s - a.e) < 30);
+    const slots = [], slotK = [];
+    for (let d = 0; d < D; d++) for (let k = 0; k < n; k++){ slots.push(d * U + uo[k]); slotK.push(k); }
+    const dayIdx = range(0, D).map(d => range(d * n, d * n + n));
+    const need = new Int16Array(discs.length);
+    discs.forEach((d, di) => {
+      const q = aulas(t, d); need[di] = q;
+      const pid = profOf(t, d), pi = profs.findIndex(p => p.id === pid);
+      for (let k = 0; k < q; k++) L.push({t: ti, d: di, p: pi});
+    });
+    return {n, tl, adj, slots, slotK, dayIdx, need, cont: new Int32Array(slots.length).fill(-1)};
+  });
+  const unav = profs.map(p => {
+    const u = new Uint8Array(Math.max(1, D * U));
+    for (const s of p.indisp){ const d = +s[0], c = toMin(s.slice(2, 4) + ':' + s.slice(4)); if (d >= D) continue;
+      for (let x = 0; x < U; x++) if (uS[x] < c + 30 && c < uE[x]) u[d * U + x] = 1; }
+    return u;
+  });
+  // PLs: cada um é uma atividade do professor sem turma; os fixos só podem ir no dia marcado
+  const PLs = [];
+  if (U) profs.forEach((pr, pi) => {
+    const hs = new Set(); for (const t of S.turmas) for (const d of discs) if (aulas(t, d) > 0 && profOf(t, d) === pr.id) hs.add(hOf(t).id);
+    let us = range(0, U).filter(u => !hs.size || [...ivs[u].hs].some(h => hs.has(h)));
+    let nf = 0;
+    const fx = plFixEff(pr), tot = plTotal(pr);
+    for (let d = 0; d < D; d++){ const n = fx[d] || 0; for (let k = 0; k < n; k++){ PLs.push({p: pi, d, cand: Int32Array.from(us.map(u => d * U + u))}); nf++; } }
+    const all = []; for (let d = 0; d < D; d++) for (const u of us) all.push(d * U + u);
+    for (let k = 0; k < Math.max(0, tot - nf); k++) PLs.push({p: pi, d: -1, cand: Int32Array.from(all)});
+  });
+  return {D, U, uS, uE, ovLater, gapN, T, L, unav, PLs, plG: new Int32Array(PLs.length).fill(-1), nP: profs.length, nD: discs.length, pos: new Int32Array(L.length).fill(-1)};
+}
+
+function createSolver(){
+  const m = buildModel(), {D, U, uS, uE, ovLater, gapN, T, L, unav, PLs, plG, nP, nD, pos} = m;
+  const maxDia = Math.max(1, +S.escola.maxDia || 2), gem = !!S.escola.gem, PD = D * U, nPL = PLs.length;
+  const occ = new Int16Array(Math.max(1, nP * PD));
+  const lday = new Int16Array(Math.max(1, nP * D)), pday = new Int16Array(Math.max(1, nP * D));
+  const tc = new Float64Array(T.length), pdc = new Float64Array(Math.max(1, nP * D));
+  const cnt = new Int16Array(nD), fst = new Int16Array(nD), snd = new Int16Array(nD), pres = new Int16Array(nD);
+  let cur = 0, best = Infinity, bestSnap = null;
+
+  function turmaCost(ti){
+    const t = T[ti], c0 = t.cont, sk = t.slotK; let c = 0;
+    pres.fill(0);
+    for (let d = 0; d < D; d++){
+      const idx = t.dayIdx[d];
+      cnt.fill(0); let last = -1;
+      for (let q = 0; q < idx.length; q++){
+        const l = c0[idx[q]]; if (l < 0) continue;
+        last = q; const dd = L[l].d, k = sk[idx[q]];
+        if (cnt[dd] === 0) fst[dd] = k; else if (cnt[dd] === 1) snd[dd] = k;
+        cnt[dd]++;
+      }
+      for (let q = 0; q < last; q++) if (c0[idx[q]] < 0) c += W.empty;
+      for (let dd = 0; dd < nD; dd++){
+        const n = cnt[dd]; if (!n) continue; pres[dd]++;
+        if (n > maxDia) c += (n - maxDia) * W.exc;
+        if (gem && n === 2){ const a = fst[dd], b = snd[dd]; if (b - a !== 1 || !t.adj[a]) c += W.gem; }
+      }
+    }
+    for (let dd = 0; dd < nD; dd++){
+      const n = t.need[dd]; if (!n) continue;
+      const target = Math.min(D, gem ? Math.ceil(n / 2) : n);
+      if (pres[dd] < target) c += (target - pres[dd]) * W.dist;
+    }
+    return c;
+  }
+  function profDay(p, d, wantParts){
+    const base = p * PD + d * U, ub = d * U, u0 = unav[p]; let clash = 0, un = 0, gaps = 0, prev = -1;
+    for (let u = 0; u < U; u++){
+      const o = occ[base + u]; if (!o) continue;
+      if (o > 1) clash += o - 1;
+      const ol = ovLater[u]; for (let z = 0; z < ol.length; z++){ const o2 = occ[base + ol[z]]; if (o2) clash += o * o2; }
+      if (u0[ub + u]) un += o;
+      if (prev >= 0 && uS[u] >= uE[prev]) gaps += gapN[prev * U + u];
+      if (prev < 0 || uE[u] > uE[prev]) prev = u;
+    }
+    const alone = (pday[p * D + d] > 0 && lday[p * D + d] === 0) ? 1 : 0;
+    return wantParts ? {clash, un, gaps, alone} : clash * W.clash + un * W.unav + gaps * W.gap + alone * W.plAlone;
+  }
+  const profDayCost = (p, d) => profDay(p, d, false);
+  function total(){
+    let c = 0;
+    for (let ti = 0; ti < T.length; ti++){ tc[ti] = turmaCost(ti); c += tc[ti]; }
+    for (let p = 0; p < nP; p++) for (let d = 0; d < D; d++){ const v = profDayCost(p, d); pdc[p * D + d] = v; c += v; }
+    return c;
+  }
+  function rebuildOcc(){
+    occ.fill(0); lday.fill(0); pday.fill(0); pos.fill(-1);
+    T.forEach(t => t.cont.forEach((l, i) => { if (l < 0) return; pos[l] = i; const p = L[l].p; if (p >= 0){ occ[p * PD + t.slots[i]]++; lday[p * D + ((t.slots[i] / U) | 0)]++; } }));
+    for (let k = 0; k < nPL; k++){ const g = plG[k]; if (g < 0) continue; const p = PLs[k].p; occ[p * PD + g]++; pday[p * D + ((g / U) | 0)]++; }
+  }
+  const snapshot = () => ({c: T.map(t => t.cont.slice()), g: plG.slice()});
+  function restore(sn){ T.forEach((t, ti) => t.cont.set(sn.c[ti])); plG.set(sn.g); rebuildOcc(); cur = total(); }
+  function profHit(p, g){ // custo de ocupar o professor p no intervalo global g
+    const d = (g / U) | 0, u = g % U, base = p * PD + d * U; let s = occ[p * PD + g] * 100;
+    for (const v of ovLater[u]) s += occ[base + v] * 100;
+    for (let w = 0; w < u; w++) if (uE[w] > uS[u] && occ[base + w]) s += 100;
+    return s + unav[p][g] * 80;
+  }
+  function init(){
+    T.forEach(t => t.cont.fill(-1)); plG.fill(-1); rebuildOcc();
+    const load = new Int32Array(Math.max(1, nP)); for (const x of L) if (x.p >= 0) load[x.p]++;
+    const ucount = unav.map(u => u.reduce((a, b) => a + b, 0));
+    const order = L.map((_, i) => i), key = order.map(i => { const x = L[i]; return (x.p >= 0 ? load[x.p] + ucount[x.p] * 0.5 : -10) + Math.random() * 3; });
+    order.sort((a, b) => key[b] - key[a]);
+    for (const l of order){
+      const x = L[l], t = T[x.t]; let bi = -1, bs = Infinity;
+      for (let i = 0; i < t.slots.length; i++){
+        if (t.cont[i] >= 0) continue;
+        const d = Math.floor(i / t.n); let s = Math.random() * 4 + t.slotK[i] * 0.3;
+        if (x.p >= 0) s += profHit(x.p, t.slots[i]);
+        for (const q of t.dayIdx[d]){ const o = t.cont[q]; if (o >= 0 && L[o].d === x.d) s += 15; }
+        if (s < bs){ bs = s; bi = i; }
+      }
+      if (bi >= 0){ t.cont[bi] = l; pos[l] = bi; if (x.p >= 0){ occ[x.p * PD + t.slots[bi]]++; lday[x.p * D + Math.floor(bi / t.n)]++; } }
+    }
+    const po = range(0, nPL).sort((a, b) => (PLs[b].d >= 0) - (PLs[a].d >= 0) || PLs[a].cand.length - PLs[b].cand.length);
+    for (const k of po){
+      const {p, cand} = PLs[k]; let bg = -1, bs = Infinity;
+      for (const g of cand){ const d = (g / U) | 0; const s = profHit(p, g) + (lday[p * D + d] ? 0 : 8) + Math.random() * 3; if (s < bs){ bs = s; bg = g; } }
+      if (bg >= 0){ plG[k] = bg; occ[p * PD + bg]++; pday[p * D + ((bg / U) | 0)]++; }
+    }
+    cur = total(); best = cur; bestSnap = snapshot();
+  }
+  function swapRaw(ti, i, j){
+    const t = T[ti], a = t.cont[i], b = t.cont[j], gi = t.slots[i], gj = t.slots[j], di = (i / t.n) | 0, dj = (j / t.n) | 0;
+    if (a >= 0){ const p = L[a].p; if (p >= 0){ occ[p * PD + gi]--; occ[p * PD + gj]++; if (di !== dj){ lday[p * D + di]--; lday[p * D + dj]++; } } pos[a] = j; }
+    if (b >= 0){ const p = L[b].p; if (p >= 0){ occ[p * PD + gj]--; occ[p * PD + gi]++; if (di !== dj){ lday[p * D + dj]--; lday[p * D + di]++; } } pos[b] = i; }
+    t.cont[i] = b; t.cont[j] = a;
+  }
+  const affP = [0, 0], affD = [0, 0], newV = new Float64Array(4);
+  function attempt(ti, i, j, temp){
+    const t = T[ti], a = t.cont[i], b = t.cont[j];
+    if (a < 0 && b < 0) return;
+    if (a >= 0 && b >= 0 && L[a].d === L[b].d && L[a].p === L[b].p) return;
+    const pa = a >= 0 ? L[a].p : -1, pb = b >= 0 ? L[b].p : -1;
+    let np = 0; if (pa >= 0) affP[np++] = pa; if (pb >= 0 && pb !== pa) affP[np++] = pb;
+    const di = (i / t.n) | 0, dj = (j / t.n) | 0; let nd = 1; affD[0] = di; if (dj !== di){ affD[1] = dj; nd = 2; }
+    let before = tc[ti];
+    for (let x = 0; x < np; x++) for (let y = 0; y < nd; y++) before += pdc[affP[x] * D + affD[y]];
+    swapRaw(ti, i, j);
+    const nt = turmaCost(ti); let after = nt, z = 0;
+    for (let x = 0; x < np; x++) for (let y = 0; y < nd; y++){ const v = profDayCost(affP[x], affD[y]); newV[z++] = v; after += v; }
+    const delta = after - before;
+    if (delta <= 0 || Math.random() < Math.exp(-delta / temp)){
+      tc[ti] = nt; z = 0;
+      for (let x = 0; x < np; x++) for (let y = 0; y < nd; y++) pdc[affP[x] * D + affD[y]] = newV[z++];
+      cur += delta;
+    } else swapRaw(ti, i, j);
+  }
+  function movePL(k, g){ const p = PLs[k].p, o = plG[k]; occ[p * PD + o]--; pday[p * D + ((o / U) | 0)]--; occ[p * PD + g]++; pday[p * D + ((g / U) | 0)]++; plG[k] = g; }
+  function attemptPL(k, temp){
+    const pl = PLs[k], g = pl.cand[(Math.random() * pl.cand.length) | 0], o = plG[k];
+    if (g === o || o < 0) return;
+    const p = pl.p, d1 = (o / U) | 0, d2 = (g / U) | 0;
+    const before = pdc[p * D + d1] + (d2 !== d1 ? pdc[p * D + d2] : 0);
+    movePL(k, g);
+    const v1 = profDayCost(p, d1), v2 = d2 !== d1 ? profDayCost(p, d2) : 0;
+    const delta = v1 + v2 - before;
+    if (delta <= 0 || Math.random() < Math.exp(-delta / temp)){ pdc[p * D + d1] = v1; if (d2 !== d1) pdc[p * D + d2] = v2; cur += delta; }
+    else movePL(k, o);
+  }
+  function conflictAt(p, g){
+    if (unav[p][g]) return true;
+    const d = (g / U) | 0, u = g % U, base = p * PD + d * U;
+    if (occ[base + u] > 1) return true;
+    for (let w = 0; w < U; w++) if (w !== u && occ[base + w] && uS[w] < uE[u] && uS[u] < uE[w]) return true;
+    return false;
+  }
+  function run(ms, T0, onTick){
+    return new Promise(res => {
+      const t0 = performance.now(), T1 = 0.05, nL = L.length, hot = [], tot = nL + nPL;
+      if (!tot){ onTick && onTick(1, cur, best); res(); return; }
+      function chunk(){
+        hot.length = 0;
+        for (let l = 0; l < nL; l++){ const x = L[l]; if (x.p >= 0 && pos[l] >= 0 && conflictAt(x.p, T[x.t].slots[pos[l]])) hot.push(l); }
+        for (let k = 0; k < nPL; k++) if (plG[k] >= 0 && conflictAt(PLs[k].p, plG[k])) hot.push(-1 - k);
+        const end = performance.now() + 30; let frac = 0;
+        while (performance.now() < end){
+          frac = Math.min(1, (performance.now() - t0) / ms);
+          const temp = T0 * Math.pow(T1 / T0, frac);
+          for (let k = 0; k < 500; k++){
+            const r = (hot.length && Math.random() < 0.5) ? hot[(Math.random() * hot.length) | 0] : (() => { const q = (Math.random() * tot) | 0; return q < nL ? q : -1 - (q - nL); })();
+            if (r < 0){ attemptPL(-1 - r, temp); continue; }
+            const i = pos[r]; if (i < 0) continue;
+            const ti = L[r].t, j = (Math.random() * T[ti].slots.length) | 0;
+            if (j !== i) attempt(ti, i, j, temp);
+          }
+          if (cur < best - 1e-9){ best = cur; bestSnap = snapshot(); }
+          if (frac >= 1 || best <= 0) break;
+        }
+        onTick && onTick(frac, cur, best);
+        if (frac >= 1 || best <= 0){ restore(bestSnap); best = cur; res(); }
+        else setTimeout(chunk, 0);
+      }
+      setTimeout(chunk, 0);
+    });
+  }
+  function report(){
+    const byPG = new Map(), plAt = new Map(), bad = new Set();
+    for (let l = 0; l < L.length; l++){ const x = L[l]; if (x.p < 0 || pos[l] < 0) continue; const k = x.p * PD + T[x.t].slots[pos[l]]; if (!byPG.has(k)) byPG.set(k, []); byPG.get(k).push(l); }
+    for (let k = 0; k < nPL; k++){ const g = plG[k]; if (g < 0) continue; const key = PLs[k].p * PD + g; plAt.set(key, (plAt.get(key) || 0) + 1); }
+    let nClash = 0, nUnav = 0, nExc = 0, gaps = 0, alone = 0; const items = [];
+    for (let p = 0; p < nP; p++) for (let d = 0; d < D; d++){
+      const base = p * PD + d * U, ls = [];
+      for (let u = 0; u < U; u++){ const a = byPG.get(base + u); if (a) for (const l of a) ls.push({l, u}); const n = plAt.get(base + u) || 0; for (let z = 0; z < n; z++) ls.push({l: -1, u}); }
+      for (let i = 0; i < ls.length; i++){
+        const A = ls[i];
+        if (unav[p][d * U + A.u]){ nUnav++; if (A.l >= 0) bad.add(A.l); items.push({type:'unav', p, d, ls:[A]}); }
+        for (let j = i + 1; j < ls.length; j++){ const B = ls[j]; if (uS[B.u] < uE[A.u] && uS[A.u] < uE[B.u]){ nClash++; if (A.l >= 0) bad.add(A.l); if (B.l >= 0) bad.add(B.l); items.push({type:'clash', p, d, ls:[A, B]}); } }
+      }
+      const pt = profDay(p, d, true); gaps += pt.gaps; alone += pt.alone;
+    }
+    T.forEach((t, ti) => { for (let d = 0; d < D; d++){ const c = new Map();
+      for (const q of t.dayIdx[d]){ const l = t.cont[q]; if (l >= 0) c.set(L[l].d, (c.get(L[l].d) || 0) + 1); }
+      for (const [dd, n] of c) if (n > maxDia){ nExc += n - maxDia; items.push({type:'exc', ti, d, dd, n}); } } });
+    return {nClash, nUnav, nExc, gaps, alone, items, byPG, plAt, bad, nPL};
+  }
+  function manualSwap(ti, i, j){ swapRaw(ti, i, j); cur = total(); }
+  return {m, init, run, report, manualSwap, PD, profGaps: (p, d) => profDay(p, d, true).gaps, cost: () => cur};
+}
+
+/* ===================== Validação ===================== */
+function validar(){
+  const errs = [], warns = []; let semProf = 0;
+  const D = S.escola.dias;
+  if (!S.turmas.length) errs.push('Cadastre ao menos uma turma.');
+  if (!S.disciplinas.length) errs.push('Cadastre ao menos uma disciplina.');
+  const pl = new Map(S.professores.map(p => [p.id, {tot:0, byH: new Map()}]));
+  for (const t of S.turmas){
+    const h = hOf(t); let tot = 0; const cap = capacidade(h);
+    for (const d of S.disciplinas){
+      const n = aulas(t, d); if (!n) continue; tot += n;
+      const pid = profOf(t, d);
+      if (!pid || !pl.has(pid)){ semProf++; warns.push(`${t.nome || 'Turma sem nome'} · ${d.nome}: ${n} aula(s) sem professor.`); continue; }
+      const x = pl.get(pid); x.tot += n; x.byH.set(h.id, (x.byH.get(h.id) || 0) + n);
+    }
+    if (tot > cap) errs.push(`${t.nome}: ${tot} aulas previstas para ${cap} horários na semana (sobram ${tot - cap}). Reduza a carga na etapa Atribuição.`);
+    else if (tot < cap) warns.push(`${t.nome}: ${cap - tot} horário(s) vago(s) na semana. O algoritmo tenta deixá-los no fim do dia.`);
+  }
+  for (const p of S.professores){
+    const x = pl.get(p.id); if (!x.tot) continue;
+    if (x.tot > p.limite) errs.push(`${p.nome}: ${x.tot} aulas atribuídas, acima do limite de ${p.limite} por semana.`);
+    const nPL = plTotal(p), fxE = plFixEff(p);
+    const blocked = (d, s, e) => isBlocked(p, d, s, e);
+    let maxAll = 0;
+    for (let d = 0; d < D; d++){ // máximo de aulas sem sobreposição no dia (escalonamento por término mais cedo)
+      const iv = [];
+      for (const hid of x.byH.keys()) for (const a of timeline(byId(S.horarios, hid)).aulas) if (!blocked(d, a.s, a.e)) iv.push(a);
+      iv.sort((a, b) => a.e - b.e); let end = -1;
+      for (const a of iv) if (a.s >= end){ maxAll++; end = a.e; }
+    }
+    const need = x.tot + nPL;
+    if (need > maxAll){ errs.push(`${p.nome}: ${x.tot} aulas + ${nPL} PLs, mas só cabem ${maxAll} atividades nos horários em que está disponível.`); continue; }
+    for (let d = 0; d < D; d++){ const f = fxE[d] || 0; if (!f) continue; let cap = 0;
+      const iv = []; for (const hid of x.byH.keys()) for (const a of timeline(byId(S.horarios, hid)).aulas) if (!blocked(d, a.s, a.e)) iv.push(a);
+      iv.sort((a, b) => a.e - b.e); let end = -1; for (const a of iv) if (a.s >= end){ cap++; end = a.e; }
+      if (f > cap) errs.push(`${p.nome}: ${f} PLs fixos na ${DIAS[d].toLowerCase()}, mas só há ${cap} horários livres nesse dia.`); }
+    for (const [hid, n] of x.byH){
+      const h = byId(S.horarios, hid); let free = 0;
+      for (let d = 0; d < D; d++) for (const a of timeline(h).aulas) if (!blocked(d, a.s, a.e)) free++;
+      if (n > free) errs.push(`${p.nome}: ${n} aulas em turmas do horário “${h.nome}”, mas só ${free} horários livres nele.`);
+    }
+  }
+  return {errs, warns, semProf};
+}
+
+/* ===================== Interface ===================== */
+const STEPS = ['Escola e horários','Turmas','Disciplinas','Professores','Atribuição','Gerar grade'];
+function stepState(i){
+  if (i === 1) return S.turmas.length ? 'ok' : 'warn';
+  if (i === 2) return S.disciplinas.length ? 'ok' : 'warn';
+  if (i === 3) return !S.professores.length ? 'warn' : S.professores.some(p => profLoad(p.id) > p.limite) ? 'bad' : 'ok';
+  if (i === 4){ const v = validar(); return v.errs.length ? 'bad' : (v.semProf ? 'warn' : 'ok'); }
+  if (i === 5) return R ? ((R.rep.nClash + R.rep.nUnav) ? 'bad' : 'ok') : '';
+  return 'ok';
+}
+function renderSteps(){
+  document.getElementById('steps').innerHTML = STEPS.map((s, i) => { const st = stepState(i);
+    return `<button class="step" data-k="go" data-s="${i}" ${i === step ? 'aria-current="step"' : ''}><span class="num">${i + 1}</span>${s}${st ? `<span class="st ${st}"></span>` : ''}</button>`; }).join('');
+}
+function renderMeta(){
+  document.getElementById('schoolTitle').textContent = S.escola.nome || 'Sem nome';
+  const tot = S.turmas.reduce((s, t) => s + totalTurma(t), 0);
+  document.getElementById('meta').textContent = `${S.turmas.length} turmas · ${S.disciplinas.length} disciplinas · ${S.professores.length} professores · aula de ${S.escola.dur} min · ${tot} aulas/semana`;
+}
+function render(){
+  const act = document.activeElement, aid = act && act.id; let ss = null; try { ss = act.selectionStart; } catch(e){}
+  renderMeta(); renderSteps();
+  const v = [vEscola, vTurmas, vDisc, vProf, vAtrib, vGerar][step]();
+  main.innerHTML = bannerHTML() + v + navHTML();
+  const fid = pendingFocus || aid; pendingFocus = null;
+  if (fid){ const el = document.getElementById(fid); if (el){ el.focus({preventScroll: !!aid && fid === aid}); try { if (ss != null && fid === aid) el.setSelectionRange(ss, ss); } catch(e){} } }
+}
+function navHTML(){
+  return `<div class="foot-nav">${step > 0 ? `<button class="btn" data-k="go" data-s="${step - 1}">← ${STEPS[step - 1]}</button>` : '<span></span>'}
+    ${step < 5 ? `<button class="btn pri" data-k="go" data-s="${step + 1}">${STEPS[step + 1]} →</button>` : ''}</div>`;
+}
+function chipCap(tot, cap){ const cls = tot > cap ? 'bad' : tot < cap ? 'warn' : 'ok'; return `<span class="chip ${cls}">${tot} / ${cap}</span>`; }
+
+/* --- 1 Escola e horários --- */
+function hCard(h){
+  const tl = timeline(h), usos = S.turmas.filter(t => t.h === h.id).length;
+  const segs = [...tl.aulas.map(a => ({...a, brk: false})), ...tl.pausas.map(p => ({...p, brk: true}))].sort((a, b) => a.s - b.s);
+  const bar = segs.map(s => `<span class="seg${s.brk ? ' brk' : ''}" style="flex:${s.e - s.s} 1 0" title="${s.brk ? esc(s.nome) : (s.k + 1) + 'ª aula'} · ${hm(s.s)}–${hm(s.e)}">${s.brk ? s.min + '′' : s.k + 1}</span>`).join('');
+  const list = segs.map(s => s.brk ? `<span class="b">${esc(s.nome)}</span><span class="t b">${hm(s.s)} – ${hm(s.e)} (${s.min} min)</span>` : `<span>${s.k + 1}ª aula</span><span class="t">${hm(s.s)} – ${hm(s.e)}</span>`).join('');
+  const opts = (v) => range(1, h.aulas).map(n => `<option value="${n}" ${n === v ? 'selected' : ''}>${n}ª</option>`).join('');
+  const ivs = h.intervalos.map((iv, x) => `<div class="iv">Após a <select id="iva-${h.id}-${x}" data-c="ivapos" data-id="${h.id}" data-x="${x}" aria-label="Depois de qual aula">${opts(iv.apos)}</select> aula:
+      <input class="ivn" id="ivn-${h.id}-${x}" data-c="ivnome" data-id="${h.id}" data-x="${x}" value="${esc(iv.nome)}" placeholder="Recreio" aria-label="Nome do intervalo">
+      <input class="ivm" type="number" min="0" max="240" id="ivm-${h.id}-${x}" data-c="ivmin" data-id="${h.id}" data-x="${x}" value="${iv.min}" aria-label="Minutos"> min
+      <button class="btn ghost" data-k="delIv" data-id="${h.id}" data-x="${x}" aria-label="Remover intervalo">Remover</button></div>`).join('');
+  return `<div class="hcard">
+    <div class="row"><input class="hn" id="hn-${h.id}" data-a="hnome" data-id="${h.id}" value="${esc(h.nome)}" aria-label="Nome do horário">
+      <button class="btn" data-k="dupH" data-id="${h.id}">Duplicar</button>
+      ${S.horarios.length > 1 ? `<button class="btn ghost" data-k="delH" data-id="${h.id}">Remover</button>` : ''}</div>
+    <div class="hrow">
+      <label class="fld"><span>Início</span><input type="time" id="hi-${h.id}" data-c="hini" data-id="${h.id}" value="${esc(h.inicio)}"></label>
+      <label class="fld"><span>Aulas por dia</span><input type="number" min="1" max="14" id="ha-${h.id}" data-c="haulas" data-id="${h.id}" value="${h.aulas}"></label>
+      <label class="fld"><span>Limite por professor</span><input type="number" min="1" max="60" id="hl-${h.id}" data-c="hlim" data-id="${h.id}" value="${h.limite}" title="Aulas semanais que um professor deste horário pode assumir"></label>
+      <label class="fld"><span>PLs com carga cheia</span><input type="number" min="0" max="30" id="hp-${h.id}" data-c="hpl" data-id="${h.id}" value="${h.pl}" title="PLs de quem tem o limite completo de aulas; quem tem menos aulas recebe PL proporcional"></label>
+      <div class="fld"><span>Término</span><b style="font-family:var(--f-mono);color:var(--ink);padding-block:7px">${hm(tl.fim)}</b></div>
+      <div class="fld"><span>Na escola</span><b style="font-family:var(--f-mono);color:var(--ink);padding-block:7px">${durTxt(tl.fim - tl.ini)}</b></div>
+    </div>
+    ${hMsg[h.id] ? `<p class="hint" style="color:var(--good)">${esc(hMsg[h.id])}</p>` : ''}
+    <div class="ivs"><span class="hint">Recreio, almoço e outros intervalos</span>${ivs || '<span class="hint">Sem intervalos.</span>'}
+      <div>${h.aulas > 1 ? `<button class="btn" data-k="addIv" data-id="${h.id}">+ Intervalo</button>` : ''}</div></div>
+    <div><div class="tl">${bar}</div><div class="tl-meta"><span>${hm(tl.ini)}</span><span>${h.aulas} aulas/dia · ${capacidade(h)}/semana · ${usos} turma${usos === 1 ? '' : 's'}</span><span>${hm(tl.fim)}</span></div></div>
+    <details class="times"><summary>Ver horário de cada aula</summary><div class="tlist">${list}</div></details>
+  </div>`;
+}
+function vEscola(){
+  const e = S.escola;
+  return `<section class="panel">
+    <div class="panel-h"><h2>Escola</h2><p class="lede">Dados gerais. A duração da aula vale para todos os horários da escola.</p></div>
+    <div class="form-grid">
+      <label class="fld"><span>Nome da escola</span><input id="e-nome" data-a="escnome" value="${esc(e.nome)}"></label>
+      <label class="fld"><span>Dias letivos</span><select id="e-dias" data-c="esc" data-key="dias"><option value="5" ${e.dias == 5 ? 'selected' : ''}>Segunda a sexta (5)</option><option value="6" ${e.dias == 6 ? 'selected' : ''}>Segunda a sábado (6)</option></select></label>
+      <div class="fld"><span>Duração de cada aula</span><div class="durrow"><div class="seg-btns" role="group" aria-label="Duração da aula">${[45, 50, 55, 60].map(v => `<button data-k="dur" data-v="${v}" aria-pressed="${e.dur === v}">${v}</button>`).join('')}</div>
+        <input type="number" min="20" max="120" id="e-dur" data-c="esc" data-key="dur" value="${e.dur}" aria-label="Outra duração em minutos"> min</div></div>
+      <label class="fld"><span>Máx. aulas da mesma disciplina por dia</span><input type="number" id="e-maxDia" min="1" max="6" value="${e.maxDia}" data-c="esc" data-key="maxDia"></label>
+      <label class="chk"><input type="checkbox" id="e-gem" data-c="esc" data-key="gem" ${e.gem ? 'checked' : ''}><span>Preferir aulas geminadas: quando uma disciplina tiver 2 aulas no mesmo dia, colocá-las em sequência (sem almoço no meio; recreio curto não atrapalha).</span></label>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="panel-h"><h2>Horários (regimes)</h2><p class="lede">Cada horário tem início, número de aulas e os intervalos com sua duração. Os horários de término são calculados. Crie quantos a escola tiver, por exemplo integral 7h de manhã (07:00–14:30) e integral 7h à tarde (12:30–19:30). O limite por professor (ex.: 18 aulas no regular) é o máximo, não o mínimo: cada professor fica com as aulas que existirem para ele. Os PLs com carga cheia valem para quem tem o limite completo; quem tem menos aulas recebe PL proporcional.</p></div>
+    <div class="hgrid">${S.horarios.map(hCard).join('')}</div>
+    <div class="row"><button class="btn pri" data-k="addH" id="b-addH">+ Horário</button></div>
+  </section>
+  <section class="panel subtle">
+    <div class="panel-h"><h3>Dados</h3><p class="hint">Tudo fica salvo neste navegador. Para levar a outro computador, copie os dados e cole na outra máquina.</p></div>
+    <div class="row">
+      <button class="btn" data-k="copyjson" id="b-json">Copiar dados</button>
+      <button class="btn" data-k="sample" id="b-sample">Carregar exemplo</button>
+      <button class="btn danger" data-k="reset" id="b-reset">${resetArmed ? 'Clique de novo para apagar tudo' : 'Começar do zero'}</button>
+    </div>
+    <textarea id="imp" placeholder="Cole aqui os dados copiados e clique em Importar"></textarea>
+    <div><button class="btn" data-k="import" id="b-imp">Importar</button></div>
+  </section>`;
+}
+
+/* --- 2 Turmas --- */
+const hOpts = sel => S.horarios.map(h => { const tl = timeline(h); return `<option value="${h.id}" ${h.id === sel ? 'selected' : ''}>${esc(h.nome)} (${hm(tl.ini)}–${hm(tl.fim)})</option>`; }).join('');
+const turmasDe = (aid, hid) => S.turmas.filter(t => t.ano === aid && (hid == null || t.h === hid));
+function letraLivre(ano){
+  const usadas = new Set(S.turmas.filter(t => t.ano === ano.id).map(t => (t.nome || '').trim().slice(-1).toUpperCase()));
+  for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') if (!usadas.has(c)) return c;
+  return String(S.turmas.length + 1);
+}
+function setQtd(aid, hid, n){
+  const ano = byId(S.anos, aid); if (!ano) return;
+  const cur = turmasDe(aid, hid);
+  for (let k = cur.length; k < n; k++) S.turmas.push({id: nid('t'), nome: `${ano.curto || ano.nome} ${letraLivre(ano)}`, h: hid, ano: aid});
+  if (n < cur.length){
+    const rm = new Set(cur.slice().sort((a, b) => b.nome.localeCompare(a.nome, 'pt')).slice(0, cur.length - n).map(t => t.id));
+    S.turmas = S.turmas.filter(t => !rm.has(t.id)); rm.forEach(id => delete S.atrib[id]);
+  }
+}
+/* mínimo de professores por disciplina: cada turma inteira com um professor, sem passar do limite (encaixe decrescente) */
+function minProfs(d){
+  const items = S.turmas.map(t => ({n: aulas(t, d), lim: hOf(t).limite || LIM_DEF})).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+  const bins = [];
+  for (const x of items){ let bi = -1, br = Infinity; bins.forEach((r, i) => { if (r >= x.n && r - x.n < br){ br = r - x.n; bi = i; } }); if (bi >= 0) bins[bi] -= x.n; else bins.push(Math.max(x.lim, x.n) - x.n); }
+  return bins.length;
+}
+function calcHTML(){
+  const dur = S.escola.dur, horas = a => durTxt(Math.round(a * dur));
+  const totA = S.turmas.reduce((s, t) => s + totalTurma(t), 0);
+  if (!S.disciplinas.length) return `<section class="panel"><div class="panel-h"><h2>Cálculo automático</h2><p class="lede">Cadastre as disciplinas (etapa 3) para ver a carga horária e os professores necessários.</p></div></section>`;
+  let needT = 0, plT = 0, falta = 0;
+  const equipe = S.professores.filter(p => S.turmas.some(t => S.disciplinas.some(d => profOf(t, d) === p.id && aulas(t, d) > 0))).length;
+  const semAula = S.disciplinas.reduce((s, d) => s + semProfTurmas(d).reduce((x, t) => x + aulas(t, d), 0), 0);
+  const rows = S.disciplinas.map(d => {
+    const tot = demanda(d); if (!tot) return '';
+    const need = minProfs(d), hab = habilitados(d.id).length; needT += need; falta += Math.max(0, need - hab);
+    for (const t of S.turmas){ const n = aulas(t, d), h = hOf(t); if (n && h.limite) plT += n * (h.pl || 0) / h.limite; }
+    const st = hab >= need ? `<span class="chip ok">ok</span>` : `<span class="chip bad">faltam ${need - hab}</span>`;
+    const eq = habilitados(d.id).map(p => [p, S.turmas.reduce((s, t) => s + (profOf(t, d) === p.id ? aulas(t, d) : 0), 0)]).filter(([, n]) => n > 0)
+      .map(([p, n]) => `<span class="${p.auto ? 'autoP' : ''}" title="${esc(p.nome)}: ${n} aulas de ${esc(d.nome)}">${esc(p.auto ? (p.nome.replace('Professor(a) ', 'Prof. ')) : first(p.nome))} ${n}</span>`).join(' · ');
+    return `<tr><td>${esc(d.nome)}</td><td class="num">${tot}</td><td class="num">${horas(tot)}</td><td class="num"><b>${need}</b></td><td class="sm">${eq || '—'}</td><td>${st}</td></tr>`;
+  }).join('');
+  const porAno = S.anos.map(a => { const ts = turmasDe(a.id); if (!ts.length) return ''; const n = ts.reduce((s, t) => s + totalTurma(t), 0);
+    return `<tr><td>${esc(a.nome)}</td><td class="num">${ts.length}</td><td class="num">${n}</td><td class="num">${horas(n)}</td></tr>`; }).join('');
+  return `<section class="panel">
+    <div class="panel-h"><h2>Cálculo automático</h2><p class="lede">Com as turmas acima e a carga de cada disciplina (etapa 3), o sistema calcula as aulas semanais, a carga horária em horas (aula de ${dur} min) e o mínimo de professores pelo limite semanal de cada horário.</p></div>
+    <div class="stats">
+      <div class="stat"><b>${S.turmas.length}</b><span>turmas</span></div>
+      <div class="stat"><b>${totA}</b><span>aulas por semana (${horas(totA)})</span></div>
+      <div class="stat ${semAula ? 'bad' : 'ok'}"><b>${equipe}</b><span>professores para atender as aulas${semAula ? ` · ${semAula} aulas ainda sem professor` : ''}</span></div>
+      ${plT ? `<div class="stat"><b>≈ ${Math.round(plT)}</b><span>PLs semanais da equipe (proporcionais às aulas)</span></div>` : ''}
+    </div>
+    <div class="calc2">
+      <div class="tscroll"><table class="list"><thead><tr><th>Disciplina</th><th>Aulas/sem.</th><th>Carga horária</th><th>Mínimo de prof.</th><th>Quem atende (aulas)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${porAno ? `<div class="tscroll"><table class="list"><thead><tr><th>Ano</th><th>Turmas</th><th>Aulas/sem.</th><th>Carga horária</th></tr></thead><tbody>${porAno}</tbody></table></div>` : ''}
+    </div>
+    <label class="chk"><input type="checkbox" id="e-auto" data-c="autoProf" ${autoOn() ? 'checked' : ''}><span>Ajustar a equipe sozinho ao mudar o número de turmas: distribui as turmas entre os professores cadastrados e cria (ou remove) professores genéricos para fechar a conta.</span></label>
+    <div class="row">${autoOn() ? '' : `<button class="btn pri" data-k="criarDist" id="b-criarDist">Criar professores que faltam e distribuir turmas</button>`}${distMsg ? `<span class="hint" style="color:var(--good)">${esc(distMsg)}</span>` : ''}</div>
+    <p class="hint">Professores genéricos (em itálico) são removidos e recriados a cada ajuste; ao renomear ou editar um deles na etapa Professores, ele passa a ser fixo. O mínimo considera que cada turma fica inteira com um professor e que ninguém passa do limite (ex.: Português com 6 aulas por turma e limite 18 → 3 turmas por professor). Um professor que leciona mais de uma disciplina pode reduzir o total.</p>
+  </section>`;
+}
+function vTurmas(){
+  const H = S.horarios;
+  const grid = S.anos.map(a => {
+    const tot = turmasDe(a.id).length;
+    return `<tr><td><input class="w-ano" id="an-nome-${a.id}" data-a="anonome" data-id="${a.id}" value="${esc(a.nome)}" aria-label="Ano"></td>
+      ${H.map(h => `<td><input type="number" min="0" max="26" id="q-${a.id}-${h.id}" data-a="qtd" data-ano="${a.id}" data-h="${h.id}" value="${turmasDe(a.id, h.id).length}" aria-label="${esc(a.nome)} · ${esc(h.nome)}"></td>`).join('')}
+      <td class="num"><b id="qt-${a.id}">${tot}</b></td><td><button class="btn ghost" data-k="delAno" data-id="${a.id}">Remover</button></td></tr>`;
+  }).join('');
+  const colTot = H.map(h => `<td class="num" id="qc-${h.id}">${S.turmas.filter(t => t.h === h.id && t.ano).length}</td>`).join('');
+  return `<section class="panel">
+    <div class="panel-h"><h2>Quantas turmas a escola tem</h2><p class="lede">Informe quantas turmas de cada ano funcionam em cada horário. As turmas são criadas e nomeadas sozinhas (6º A, 6º B…).</p></div>
+    <div class="tscroll"><table class="list qtab"><thead><tr><th>Ano</th>${H.map(h => `<th>${esc(h.nome)}</th>`).join('')}<th>Total</th><th></th></tr></thead>
+      <tbody>${grid || `<tr><td colspan="${H.length + 3}" class="sm">Nenhum ano cadastrado.</td></tr>`}</tbody>
+      <tfoot><tr><td>Total</td>${colTot}<td class="num"><b id="qg">${S.turmas.filter(t => t.ano).length}</b></td><td></td></tr></tfoot></table></div>
+    <div class="row"><button class="btn" data-k="addAno" id="b-addAno">+ Ano / série</button><button class="btn ghost" data-k="zerarQ" id="b-zerar">Zerar quantidades</button><span class="hint">Digite o número de turmas: elas são criadas, e o cálculo e a equipe se atualizam sozinhos. O total da escola é a soma de todas as casas.</span></div>
+  </section>
+  <div id="calcBox" class="box">${calcHTML()}</div>
+  <div id="listBox" class="box">${listaTurmasHTML()}</div>`;
+}
+function listaTurmasHTML(){
+  const anoOpts = sel => `<option value="">—</option>` + S.anos.map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.nome)}</option>`).join('');
+  const rows = S.turmas.map(t => `<tr>
+      <td><input class="w-name" id="tn-${t.id}" data-a="tnome" data-id="${t.id}" value="${esc(t.nome)}" aria-label="Nome da turma"></td>
+      <td><select id="ty-${t.id}" data-c="tano" data-id="${t.id}" aria-label="Ano">${anoOpts(t.ano)}</select></td>
+      <td><select id="tr-${t.id}" data-c="treg" data-id="${t.id}" aria-label="Horário">${hOpts(t.h)}</select></td>
+      <td class="num">${chipCap(totalTurma(t), capacidade(hOf(t)))}</td>
+      <td><button class="btn ghost" data-k="delT" data-id="${t.id}" aria-label="Remover ${esc(t.nome)}">Remover</button></td></tr>`).join('');
+  return `<section class="panel">
+    <div class="panel-h"><h3>Lista de turmas</h3><p class="hint">Aqui dá para renomear, trocar o horário de uma turma específica ou incluir uma turma avulsa.</p></div>
+    <div class="tscroll"><table class="list"><thead><tr><th>Turma</th><th>Ano</th><th>Horário</th><th>Aulas / horários</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="sm">Nenhuma turma ainda.</td></tr>'}</tbody></table></div>
+    <div class="row"><button class="btn" data-k="addT" id="b-addT">+ Turma avulsa</button></div>
+  </section>`;
+}
+/* atualiza o cálculo sem redesenhar o campo em que a pessoa está digitando */
+function refreshTurmas(){
+  const cb = document.getElementById('calcBox'), lb = document.getElementById('listBox');
+  if (!cb || !lb){ render(); return; }
+  cb.innerHTML = calcHTML(); lb.innerHTML = listaTurmasHTML();
+  for (const a of S.anos){ const el = document.getElementById('qt-' + a.id); if (el) el.textContent = turmasDe(a.id).length; }
+  for (const h of S.horarios){ const el = document.getElementById('qc-' + h.id); if (el) el.textContent = S.turmas.filter(t => t.h === h.id && t.ano).length; }
+  const g = document.getElementById('qg'); if (g) g.textContent = S.turmas.filter(t => t.ano).length;
+  renderMeta(); renderSteps();
+}
+let qTimer = null;
+function aplicarQtd(el){
+  clearTimeout(qTimer); qTimer = null;
+  const v = el.value.trim(); if (v === '') return;
+  const n = Math.max(0, Math.min(26, parseInt(v, 10) || 0));
+  if (n === turmasDe(el.dataset.ano, el.dataset.h).length) return;
+  setQtd(el.dataset.ano, el.dataset.h, n); distMsg = '';
+  if (autoOn()) ajustarEquipe();
+  changed(); refreshTurmas();
+}
+
+/* --- 3 Disciplinas --- */
+const discTotals = hid => S.disciplinas.reduce((s, d) => s + (+d.carga[hid] || 0), 0);
+function vDisc(){
+  const H = S.horarios;
+  const rows = S.disciplinas.map((d, di) => `<tr>
+    <td><span class="chip" style="background:oklch(var(--chipL) var(--chipC) ${hueOf(di)});color:var(--chipInk)">&nbsp;</span></td>
+    <td><input class="w-name" id="dn-${d.id}" data-a="dnome" data-id="${d.id}" value="${esc(d.nome)}" aria-label="Disciplina"></td>
+    <td><input class="w-sig" id="ds-${d.id}" data-a="dsig" data-id="${d.id}" value="${esc(d.sigla)}" maxlength="6" aria-label="Sigla"></td>
+    ${H.map(h => `<td><input type="number" min="0" max="40" id="dc-${d.id}-${h.id}" data-a="dcarga" data-id="${d.id}" data-r="${h.id}" value="${+d.carga[h.id] || 0}" aria-label="${esc(h.nome)}"></td>`).join('')}
+    <td><button class="btn ghost" data-k="delD" data-id="${d.id}">Remover</button></td></tr>`).join('');
+  return `<section class="panel">
+    <div class="panel-h"><h2>Disciplinas e aulas por semana</h2><p class="lede">Quantas aulas semanais cada disciplina tem em cada horário. Esse é o padrão; dá para ajustar turma a turma na etapa Atribuição.</p></div>
+    <div class="tscroll"><table class="list"><thead><tr><th></th><th>Disciplina</th><th>Sigla</th>${H.map(h => `<th style="white-space:normal;min-width:76px">${esc(h.nome)}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="${H.length + 4}" class="sm">Nenhuma disciplina ainda.</td></tr>`}</tbody>
+    <tfoot><tr><td></td><td colspan="2">Total / horários</td>${H.map(h => `<td id="dtot-${h.id}">${chipCap(discTotals(h.id), capacidade(h))}</td>`).join('')}<td></td></tr></tfoot></table></div>
+    <div class="row"><button class="btn pri" data-k="addD" id="b-addD">+ Disciplina</button></div>
+  </section>`;
+}
+function refreshDisc(){ for (const h of S.horarios){ const el = document.getElementById('dtot-' + h.id); if (el) el.innerHTML = chipCap(discTotals(h.id), capacidade(h)); } }
+
+/* --- 4 Professores --- */
+function profInfo(p){
+  let tot = 0; const map = new Map();
+  for (const t of S.turmas) for (const d of S.disciplinas){ if (profOf(t, d) !== p.id) continue; const n = aulas(t, d); if (!n) continue; tot += n; const k = d.sigla || d.nome; if (!map.has(k)) map.set(k, []); map.get(k).push(t.nome); }
+  return {tot, txt: [...map].map(([s, ts]) => `${s}: ${ts.join(', ')}`).join(' · ')};
+}
+const cellKey = (d, m) => d + '-' + hm(m).replace(':', '');
+function unavGrid(p){
+  const D = S.escola.dias, {a, b} = cellRange(), blk = new Set(p.indisp);
+  let h = `<div class="unav"><p class="hint">Marque as meias horas em que ${esc(first(p.nome))} <b>não pode</b> dar aula. Toque no dia ou no horário para marcar a linha inteira. Uma aula que encoste numa faixa marcada conta como indisponível.</p><div class="tscroll"><table class="ugrid"><thead><tr><th></th>`;
+  for (let d = 0; d < D; d++) h += `<th><button class="mini" data-k="unavDay" data-id="${p.id}" data-d="${d}">${DIAS3[d]}</button></th>`;
+  h += '</tr></thead><tbody>';
+  for (let m = a; m < b; m += 30){
+    h += `<tr${m === 720 ? ' class="tsep"' : ''}><th><button class="mini" data-k="unavRow" data-id="${p.id}" data-m="${m}">${hm(m)}</button></th>`;
+    for (let d = 0; d < D; d++){ const k = cellKey(d, m), on = blk.has(k); h += `<td><button class="ub ${on ? 'on' : ''}" id="ub-${p.id}-${k}" data-k="unav" data-id="${p.id}" data-s="${k}" aria-pressed="${on}" aria-label="${DIAS[d]}, ${hm(m)} a ${hm(m + 30)}">${on ? '×' : ''}</button></td>`; }
+    h += '</tr>';
+  }
+  return h + '</tbody></table></div></div>';
+}
+function plCell(p){
+  const D = S.escola.dias, tot = plTotal(p), fx = plFixEff(p), nf = fx.reduce((a, b) => a + b, 0), al = tot - nf;
+  const marc = p.plFix.slice(0, D).reduce((a, b) => a + (+b || 0), 0);
+  const aul = [...aulasPorHorario(p).values()].reduce((a, b) => a + b, 0);
+  const totUI = p.plModo === 'manual'
+    ? `<input type="number" min="0" max="30" id="pp-${p.id}" data-c="ppl" data-id="${p.id}" value="${p.pl}" aria-label="PLs por semana de ${esc(p.nome)}">`
+    : `<b class="plv" title="Proporcional às ${aul} aulas atribuídas">${tot}</b><span>de ${aul} aulas</span>`;
+  return `<div class="plc"><div class="pt"><select id="pm-${p.id}" data-c="pmodo" data-id="${p.id}" aria-label="Como calcular os PLs"><option value="auto" ${p.plModo !== 'manual' ? 'selected' : ''}>Proporcional</option><option value="manual" ${p.plModo === 'manual' ? 'selected' : ''}>Manual</option></select>${totUI}</div>
+    <div class="pfx">${range(0, D).map(d => `<label><span>${DIAS3[d]}</span><input type="number" min="0" max="14" id="pf-${p.id}-${d}" data-c="pfix" data-id="${p.id}" data-d="${d}" value="${p.plFix[d] || 0}" class="${p.plFix[d] ? 'on' : ''}" aria-label="PLs fixos na ${DIAS[d]}"></label>`).join('')}</div>
+    <span class="chip neu">${nf} fixo${nf === 1 ? '' : 's'} · ${al} aleatório${al === 1 ? '' : 's'}${marc > nf ? ` · ${marc - nf} fixo(s) não cabe(m)` : ''}</span></div>`;
+}
+function loadChip(n, lim){ return `<span class="chip ${n > lim ? 'bad' : n === lim ? 'ok' : 'neu'}">${n} / ${lim}</span>`; }
+function vProf(){
+  const rows = S.professores.map(p => { const inf = profInfo(p), bl = p.indisp.length, open = openProf === p.id;
+    const chips = S.disciplinas.map(d => `<button class="dchip" data-k="pdisc" data-id="${p.id}" data-d="${d.id}" aria-pressed="${p.discs.includes(d.id)}" title="${esc(d.nome)}">${esc(d.sigla || d.nome)}</button>`).join('');
+    return `<tr>
+      <td><input class="w-name" id="pn-${p.id}" data-a="pnome" data-id="${p.id}" value="${esc(p.nome)}" aria-label="Nome do professor"><div class="sm" style="margin-top:4px">${esc(inf.txt) || 'Sem turmas atribuídas'}</div></td>
+      <td><div class="dchips">${chips || '<span class="sm">Cadastre disciplinas</span>'}</div></td>
+      <td><input type="number" min="1" max="60" id="pl-${p.id}" data-c="plim" data-id="${p.id}" value="${p.limite}" aria-label="Limite semanal de ${esc(p.nome)}"></td>
+      <td class="num">${loadChip(inf.tot, p.limite)}</td>
+      <td>${plCell(p)}</td>
+      <td><button class="btn" data-k="toggleP" data-id="${p.id}" aria-expanded="${open}">${bl ? `${durTxt(bl * 30)} bloqueadas` : 'Disponível sempre'} ${open ? '▴' : '▾'}</button></td>
+      <td><button class="btn ghost" data-k="delP" data-id="${p.id}">Remover</button></td></tr>
+      ${open ? `<tr><td colspan="7">${unavGrid(p)}</td></tr>` : ''}`; }).join('');
+  return `<section class="panel">
+    <div class="panel-h"><h2>Professores</h2><p class="lede">Para cada professor: as disciplinas que leciona e quantas aulas pode assumir por semana. Com isso a etapa Atribuição calcula se a escola tem professores suficientes e divide as turmas sem passar do limite de ninguém.</p></div>
+    <div class="tscroll"><table class="list"><thead><tr><th>Professor</th><th>Disciplinas que leciona</th><th>Limite/sem.</th><th>Atribuídas</th><th>PLs (planejamento)</th><th>Indisponibilidade</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" class="sm">Nenhum professor ainda.</td></tr>'}</tbody></table></div>
+    <div class="row"><button class="btn pri" data-k="addP" id="b-addP">+ Professor</button><span class="hint">Exemplo: Português com 6 aulas por turma e limite de 18 → um professor atende 3 turmas.</span></div>
+    <p class="hint">PLs: por padrão são proporcionais às aulas que o professor realmente tem (definido em “PLs com carga cheia” na etapa 1); quem tem poucas aulas recebe menos PL. Use “Manual” para um caso específico. Nas casinhas dos dias, marque quantos são fixos (ex.: PL de área na quarta). Os demais são aleatórios: o algoritmo encaixa onde for melhor, de preferência nas janelas do professor e em dias em que ele já está na escola.</p>
+  </section>`;
+}
+
+/* --- 5 Atribuição --- */
+function demandaHTML(){
+  const rows = S.disciplinas.map(d => {
+    const inf = demandaInfo(d); if (!inf.tot) return '';
+    const hab = habilitados(d.id);
+    const porH = [...inf.byH].map(([hid, n]) => { const h = byId(S.horarios, hid); return `${esc(h.nome)}: ${n} (lim. ${h.limite})`; }).join('<br>');
+    const profs = hab.map(p => { const l = profLoad(p.id); return `<span class="${l > p.limite ? 'over' : ''}">${esc(first(p.nome))} ${l}/${p.limite}</span>`; }).join(' · ');
+    const capLivre = hab.reduce((s, p) => s + Math.max(0, p.limite - profLoad(p.id, d.id)), 0);
+    let st;
+    if (!hab.length) st = `<span class="chip bad">nenhum professor habilitado</span>`;
+    else if (inf.un) st = `<span class="chip bad">faltam ${inf.un} aula${inf.un > 1 ? 's' : ''}</span>`;
+    else if (hab.some(p => profLoad(p.id) > p.limite)) st = `<span class="chip bad">limite estourado</span>`;
+    else st = `<span class="chip ok">atendida</span>`;
+    return `<tr><td><b>${esc(d.nome)}</b></td><td class="num">${inf.tot}</td><td class="sm">${porH}</td>
+      <td class="num" title="Soma das aulas de cada horário dividida pelo limite daquele horário, arredondada para cima">${inf.need}</td>
+      <td class="num">${hab.length}<span class="sm"> · cabem ${capLivre}</span></td>
+      <td class="sm">${profs || '—'}</td><td>${st}</td>
+      <td><button class="btn" data-k="distD" data-d="${d.id}" ${hab.length ? '' : 'disabled'}>Distribuir</button></td></tr>`;
+  }).join('');
+  const faltam = S.disciplinas.some(d => semProfTurmas(d).length);
+  return `<section class="panel">
+    <div class="panel-h"><h2>Demanda × professores</h2><p class="lede">Total de aulas por disciplina somando todas as turmas, quantos professores isso exige pelo limite semanal e quem pode assumir. “Distribuir” divide as turmas entre os professores habilitados: cada turma fica com um só professor e ninguém passa do limite.</p></div>
+    <div class="tscroll"><table class="list dem"><thead><tr><th>Disciplina</th><th>Aulas/sem.</th><th>Por horário</th><th>Precisa de</th><th>Professores</th><th>Carga atual / limite</th><th>Situação</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="row">
+      <button class="btn pri" data-k="distAll" id="b-distAll">Distribuir todas as disciplinas</button>
+      <button class="btn" data-k="criarFalt" id="b-criar" ${faltam ? '' : 'disabled'}>Criar professores que faltam</button>
+      ${distMsg ? `<span class="hint">${esc(distMsg)}</span>` : ''}
+    </div>
+    <p class="hint">“Distribuir todas” refaz as atribuições do zero. “Criar professores que faltam” cadastra professores genéricos (ex.: “Professor(a) LP 3”) com o limite do horário da turma; depois é só renomear na etapa Professores.</p>
+  </section>`;
+}
+function vAtrib(){
+  if (!S.turmas.length || !S.disciplinas.length) return `<section class="panel"><h2>Atribuição</h2><p class="lede">Cadastre turmas e disciplinas primeiro.</p></section>`;
+  const popts = (sel, did) => {
+    const hab = habilitados(did), out = S.professores.filter(p => !p.discs.includes(did));
+    const o = p => { const l = profLoad(p.id); return `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.nome)} (${l}/${p.limite})</option>`; };
+    return `<option value="">— sem professor —</option>` + (hab.length ? `<optgroup label="Habilitados">${hab.map(o).join('')}</optgroup>` : '') + (out.length ? `<optgroup label="Outros">${out.map(o).join('')}</optgroup>` : '');
+  };
+  let h = demandaHTML() + `<section class="panel"><div class="panel-h"><h2>Quem dá cada aula</h2><p class="lede">Ajuste fino turma a turma: número de aulas por semana (vem do padrão do horário) e professor, com a carga atual/limite ao lado do nome. Borda laranja indica carga diferente do padrão.</p></div>
+  <div class="tscroll"><table class="mx"><thead><tr><th>Disciplina</th>`;
+  for (const t of S.turmas) h += `<th><span class="tn">${esc(t.nome)}</span><span class="rg">${esc(hOf(t).nome)}</span><span id="tot-${t.id}">${chipCap(totalTurma(t), capacidade(hOf(t)))}</span></th>`;
+  h += '</tr></thead><tbody>';
+  for (const d of S.disciplinas){
+    h += `<tr><th>${esc(d.nome)}</th>`;
+    for (const t of S.turmas){
+      const n = aulas(t, d), ov = S.atrib[t.id]?.[d.id]?.n != null;
+      h += `<td class="${n ? '' : 'zero'}"><div class="cl"><input type="number" min="0" max="40" id="an-${t.id}-${d.id}" class="${ov ? 'ov' : ''}" data-a="an" data-t="${t.id}" data-d="${d.id}" value="${n}" aria-label="Aulas de ${esc(d.nome)} no ${esc(t.nome)}"><select id="ap-${t.id}-${d.id}" data-c="aprof" data-t="${t.id}" data-d="${d.id}" aria-label="Professor">${popts(profOf(t, d), d.id)}</select></div></td>`;
+    }
+    h += '</tr>';
+  }
+  return h + '</tbody></table></div></section>';
+}
+function refreshAtrib(tid){ const t = byId(S.turmas, tid), el = document.getElementById('tot-' + tid); if (t && el) el.innerHTML = chipCap(totalTurma(t), capacidade(hOf(t))); }
+
+/* --- 6 Gerar --- */
+function vGerar(){
+  const v = validar(), tot = S.turmas.reduce((s, t) => s + totalTurma(t), 0);
+  const li = (cls, s) => `<li class="${cls}">${esc(s)}</li>`;
+  let checks = v.errs.map(s => li('bad', s)).join('') + v.warns.slice(0, 8).map(s => li('warn', s)).join('');
+  if (v.warns.length > 8) checks += li('warn', `…e mais ${v.warns.length - 8} aviso(s).`);
+  if (!v.errs.length && !v.warns.length) checks = li('ok', 'Cargas fecham com os horários e todas as aulas têm professor.');
+  let h = `<section class="panel"><div class="panel-h"><h2>Gerar grade</h2><p class="lede">O algoritmo distribui ${tot} aulas em ${S.turmas.length} turmas usando o relógio real de cada horário: um professor nunca fica em duas aulas que se sobrepõem, mesmo entre turmas de horários diferentes. Também respeita indisponibilidades, espalha cada disciplina pela semana e reduz janelas (recreio e almoço não contam como janela).</p></div>
+    <ul class="checks">${checks}</ul>
+    <div class="row">
+      <label class="fld"><span>Tempo de busca</span><select id="e-tempo" data-c="esc" data-key="tempo">${[[3,'Rápido · 3 s'],[6,'Normal · 6 s'],[15,'Caprichado · 15 s'],[40,'Máximo · 40 s']].map(([s, n]) => `<option value="${s}" ${S.escola.tempo == s ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <button class="btn pri" data-k="gerar" id="b-gerar" ${v.errs.length || running ? 'disabled' : ''}>${R ? 'Gerar outra versão' : 'Gerar grade'}</button>
+      ${R ? `<button class="btn" data-k="otimizar" id="b-otim" ${running ? 'disabled' : ''}>Melhorar esta versão</button>` : ''}
+    </div>
+    <div class="prog" id="prog" ${running ? '' : 'hidden'}><div class="bar"><i id="prog-bar"></i></div><span id="prog-txt">Preparando…</span></div>
+  </section>`;
+  if (R) h += vResult();
+  return h;
+}
+function cellHTML(ti, i, opts = {}){
+  const t = R.m.T[ti], l = t.cont[i];
+  const isSel = sel && sel.ti === ti && sel.i === i, click = opts.noclick ? '' : ` data-k="cell" data-t="${ti}" data-i="${i}"`;
+  if (l < 0) return `<td class="e${isSel ? ' sel' : ''}"${click} title="Horário vago"></td>`;
+  const x = R.m.L[l], d = S.disciplinas[x.d], p = x.p >= 0 ? S.professores[x.p] : null;
+  const top = opts.turma ? S.turmas[ti].nome : (d.sigla || d.nome);
+  const sub = opts.turma ? (d.sigla || d.nome) + (opts.extra || '') : (p ? first(p.nome) : 'sem prof.');
+  return `<td class="c${R.rep.bad.has(l) ? ' bad' : ''}${isSel ? ' sel' : ''}" style="--h:${hueOf(x.d)}"${click} title="${esc(d.nome)}${p ? ' — ' + esc(p.nome) : ''}"><span class="sg">${esc(top)}</span><span class="pf">${esc(sub)}</span></td>`;
+}
+const aulaLabel = a => `${a.k + 1}ª ${hm(a.s)}`;
+function turmaRows(t, D, cellFn){
+  let h = '';
+  t.tl.aulas.forEach((a, k) => {
+    h += `<tr><th class="pl">${aulaLabel(a)}</th>${range(0, D).map(d => cellFn(d * t.n + k)).join('')}</tr>`;
+    for (const p of t.tl.pausas) if (p.after === k) h += `<tr class="lunch"><td colspan="${D + 1}">${esc(p.nome)} · ${hm(p.s)}–${hm(p.e)}</td></tr>`;
+  });
+  return h;
+}
+function vResult(){
+  const {rep, m} = R, e = S.escola, D = e.dias;
+  const stat = (n, lab, cls) => `<div class="stat ${cls}"><b>${n}</b><span>${lab}</span></div>`;
+  const dHead = range(0, D).map(d => `<th>${DIAS3[d]}</th>`).join('');
+  let h = `<section class="panel">
+    <div class="row end"><h2>Grade gerada</h2><span class="meta">${R.at.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</span></div>
+    <div class="stats">
+      ${stat(m.L.length, 'aulas alocadas', 'ok')}
+      ${stat(rep.nClash, 'choques de professor', rep.nClash ? 'bad' : 'ok')}
+      ${stat(rep.nUnav, 'aulas em horário indisponível', rep.nUnav ? 'bad' : 'ok')}
+      ${stat(rep.nExc, `excessos de ${e.maxDia} aulas/dia na mesma disciplina`, rep.nExc ? 'warn' : 'ok')}
+      ${stat(rep.gaps, 'janelas nos horários dos professores', rep.gaps ? 'warn' : 'ok')}
+      ${rep.nPL ? stat(rep.nPL, `PLs alocados${rep.alone ? ` · ${rep.alone} dia(s) só com PL` : ''}`, rep.alone ? 'warn' : 'ok') : ''}
+    </div>`;
+  const desc = A => { if (A.l < 0) return `PL (${hm(m.uS[A.u])}–${hm(m.uE[A.u])})`; const x = m.L[A.l], t = m.T[x.t], a = t.tl.aulas[t.slotK[m.pos[A.l]]]; return `${esc(S.turmas[x.t].nome)} (${hm(a.s)}–${hm(a.e)})`; };
+  const iss = rep.items.slice(0, 14).map(it => {
+    if (it.type === 'exc') return `<li>${esc(S.turmas[it.ti].nome)} · ${DIAS[it.d]}: ${it.n} aulas de ${esc(S.disciplinas[it.dd].nome)}</li>`;
+    const pn = esc(S.professores[it.p].nome);
+    return it.type === 'clash' ? `<li><b>Choque</b> · ${pn} · ${DIAS[it.d]}: ${it.ls.map(desc).join(' e ')}</li>` : `<li><b>Indisponível</b> · ${pn} · ${DIAS[it.d]}: ${desc(it.ls[0])}</li>`;
+  }).join('');
+  if (iss) h += `<ul class="issues">${iss}</ul>${rep.items.length > 14 ? `<p class="hint">…e mais ${rep.items.length - 14}.</p>` : ''}`;
+  if (rep.nClash || rep.nUnav) h += `<p class="hint">Ainda há conflitos. Tente “Melhorar esta versão” com mais tempo; se persistirem, a carga de algum professor provavelmente não cabe nos horários dele.</p>`;
+  h += `<div class="row end"><div class="tabs" role="tablist">${[['turmas','Por turma'],['geral','Quadro geral'],['profs','Por professor']].map(([k, n]) => `<button class="tab" role="tab" data-k="tab" data-tab="${k}" aria-selected="${resTab === k}">${n}</button>`).join('')}</div>
+    <button class="btn" data-k="copy" id="b-copy">Copiar para planilha</button></div>
+    ${resTab !== 'profs' ? `<p class="hint">Toque numa aula e depois em outro horário da mesma turma para trocar as duas de lugar. Bordas vermelhas marcam conflito.</p>` : ''}`;
+
+  if (resTab === 'turmas'){
+    h += '<div class="cards">';
+    S.turmas.forEach((tu, ti) => {
+      const t = m.T[ti];
+      h += `<div class="card"><div class="card-h"><h3>${esc(tu.nome)}</h3><span class="meta">${esc(hOf(tu).nome)} · ${hm(t.tl.ini)}–${hm(t.tl.fim)}</span></div><div class="tscroll"><table class="gr"><thead><tr><th class="pl"></th>${dHead}</tr></thead><tbody>${turmaRows(t, D, i => cellHTML(ti, i))}</tbody></table></div></div>`;
+    });
+    h += '</div>';
+  } else if (resTab === 'geral'){
+    h += '<div style="display:grid;gap:16px">';
+    for (const hh of S.horarios){
+      const tis = S.turmas.map((t, i) => [t, i]).filter(([t]) => t.h === hh.id); if (!tis.length) continue;
+      const tl = m.T[tis[0][1]].tl;
+      h += `<div class="card"><div class="card-h"><h3>${esc(hh.nome)}</h3><span class="meta">${hm(tl.ini)}–${hm(tl.fim)}</span></div><div class="tscroll"><table class="gr qg"><thead><tr><th class="pl"></th>${tis.map(([t]) => `<th>${esc(t.nome)}</th>`).join('')}</tr></thead><tbody>`;
+      for (let d = 0; d < D; d++){
+        h += `<tr class="dsep"><th class="pl" style="text-align:left">${DIAS[d]}</th>${tis.map(() => '<td class="x" style="height:auto"></td>').join('')}</tr>`;
+        tl.aulas.forEach((a, k) => { h += `<tr><th class="pl">${aulaLabel(a)}</th>${tis.map(([, ti]) => cellHTML(ti, d * m.T[ti].n + k)).join('')}</tr>`; });
+      }
+      h += '</tbody></table></div></div>';
+    }
+    h += '</div>';
+  } else {
+    h += `<p class="hint">As linhas mostram todos os horários de aula usados na escola. Faixas hachuradas são horários em que o professor está indisponível.</p><div class="cards">`;
+    S.professores.forEach((p, pi) => {
+      const lessons = m.L.reduce((s, x) => s + (x.p === pi ? 1 : 0), 0), npl = m.PLs.filter(x => x.p === pi).length; if (!lessons && !npl) return;
+      let gaps = 0; for (let d = 0; d < D; d++) gaps += R.solver.profGaps(pi, d);
+      const u0 = m.unav[pi];
+      const rowsU = range(0, m.U).filter(u => { for (let d = 0; d < D; d++){ const key = pi * R.solver.PD + d * m.U + u; if (rep.byPG.has(key) || rep.plAt.has(key)) return true; } return false; });
+      h += `<div class="card"><div class="card-h"><h3>${esc(p.nome)}</h3><span class="meta">${lessons} aulas · ${npl} PL · ${gaps} janela${gaps === 1 ? '' : 's'}</span></div><div class="tscroll"><table class="gr"><thead><tr><th class="pl"></th>${dHead}</tr></thead><tbody>`;
+      for (const u of rowsU){
+        h += `<tr><th class="pl">${hm(m.uS[u])}–${hm(m.uE[u])}</th>`;
+        for (let d = 0; d < D; d++){
+          const g = d * m.U + u, ls = rep.byPG.get(pi * R.solver.PD + g);
+          const npg = rep.plAt.get(pi * R.solver.PD + g) || 0;
+          if (!ls && npg){ h += `<td class="pl${u0[g] || npg > 1 ? ' bad' : ''}" title="Planejamento"><span class="sg">PL</span><span class="pf">planejamento</span></td>`; continue; }
+          if (!ls){ h += `<td class="${u0[g] ? 'na' : 'x'}"${u0[g] ? ' title="Indisponível"' : ''}></td>`; continue; }
+          const ti = m.L[ls[0]].t;
+          h += cellHTML(ti, m.pos[ls[0]], {turma: true, noclick: true, extra: (ls.length > 1 ? ` +${ls.length - 1}` : '') + (npg ? ' +PL' : '')});
+        }
+        h += '</tr>';
+      }
+      h += '</tbody></table></div></div>';
+    });
+    h += '</div>';
+  }
+  return h + '</section>';
+}
+function lessonTxt(ti, i, withTurma){
+  const l = R.m.T[ti].cont[i]; if (l < 0) return '';
+  const x = R.m.L[l], d = S.disciplinas[x.d], p = x.p >= 0 ? S.professores[x.p].nome : '';
+  return (withTurma ? S.turmas[ti].nome + ' - ' : '') + (d.sigla || d.nome) + (p ? ' (' + p + ')' : '');
+}
+function buildTSV(){
+  const D = S.escola.dias, m = R.m, out = [];
+  const hdr = ['Horário', ...range(0, D).map(d => DIAS[d])].join('\t');
+  if (resTab === 'turmas'){
+    S.turmas.forEach((tu, ti) => { const t = m.T[ti]; out.push(tu.nome + '\t' + hOf(tu).nome, hdr);
+      t.tl.aulas.forEach((a, k) => {
+        out.push([`${k + 1}ª ${hm(a.s)}-${hm(a.e)}`, ...range(0, D).map(d => lessonTxt(ti, d * t.n + k))].join('\t'));
+        for (const p of t.tl.pausas) if (p.after === k) out.push(`${p.nome} ${hm(p.s)}-${hm(p.e)}`);
+      });
+      out.push(''); });
+  } else if (resTab === 'geral'){
+    for (const hh of S.horarios){
+      const tis = S.turmas.map((t, i) => [t, i]).filter(([t]) => t.h === hh.id); if (!tis.length) continue;
+      const tl = m.T[tis[0][1]].tl;
+      out.push(hh.nome, ['Dia', 'Horário', ...tis.map(([t]) => t.nome)].join('\t'));
+      for (let d = 0; d < D; d++) tl.aulas.forEach((a, k) => out.push([DIAS[d], `${k + 1}ª ${hm(a.s)}-${hm(a.e)}`, ...tis.map(([, ti]) => lessonTxt(ti, d * m.T[ti].n + k))].join('\t')));
+      out.push('');
+    }
+  } else {
+    S.professores.forEach((p, pi) => { if (!m.L.some(x => x.p === pi) && !m.PLs.some(x => x.p === pi)) return; out.push(p.nome, hdr);
+      for (let u = 0; u < m.U; u++){
+        const cells = range(0, D).map(d => { const key = pi * R.solver.PD + d * m.U + u, ls = R.rep.byPG.get(key) || [], np = R.rep.plAt.get(key) || 0;
+          return [...ls.map(l => { const x = m.L[l]; return S.turmas[x.t].nome + ' - ' + (S.disciplinas[x.d].sigla || S.disciplinas[x.d].nome); }), ...range(0, np).map(() => 'PL')].join(' / '); });
+        if (cells.some(Boolean)) out.push([`${hm(m.uS[u])}-${hm(m.uE[u])}`, ...cells].join('\t'));
+      }
+      out.push(''); });
+  }
+  return out.join('\n');
+}
+
+/* ===================== Ações ===================== */
+async function copyText(txt, btn){
+  if (window.Android && Android.copy){ Android.copy(txt); const o = btn.textContent; btn.textContent = 'Copiado'; setTimeout(() => { btn.textContent = o; }, 1600); return; }
+  try { await navigator.clipboard.writeText(txt); const o = btn.textContent; btn.textContent = 'Copiado'; setTimeout(() => { btn.textContent = o; }, 1600); }
+  catch(e){ const fb = document.getElementById('fb'), ta = document.getElementById('fb-text'); ta.value = txt; fb.hidden = false; ta.focus(); ta.select(); }
+}
+async function gerar(cont){
+  if (running) return;
+  running = true; const myVer = ver;
+  const solver = cont && R ? R.solver : createSolver();
+  if (!(cont && R)) solver.init();
+  render();
+  const t0 = performance.now();
+  await solver.run(S.escola.tempo * 1000, cont ? 4 : 12, (frac, cur, best) => {
+    const bar = document.getElementById('prog-bar'), txt = document.getElementById('prog-txt');
+    if (bar) bar.style.width = Math.round(frac * 100) + '%';
+    if (txt) txt.textContent = `${((performance.now() - t0) / 1000).toFixed(1)} s · penalidade atual ${Math.round(cur)} · melhor ${Math.round(best)}`;
+  });
+  running = false;
+  if (myVer !== ver){ render(); return; }
+  R = {solver, m: solver.m, rep: solver.report(), at: new Date()}; sel = null;
+  render();
+}
+function toggleUnav(p, keys){
+  const s = new Set(p.indisp), allOn = keys.every(k => s.has(k));
+  keys.forEach(k => allOn ? s.delete(k) : s.add(k)); p.indisp = [...s];
+}
+
+const main = typeof document !== 'undefined' ? document.getElementById('main') : null;
+function onInput(e){
+  const el = e.target, a = el.dataset.a; if (!a) return; const v = el.value;
+  if (a === 'escnome'){ S.escola.nome = v; renderMeta(); save(); return; }
+  if (a === 'hnome'){ byId(S.horarios, el.dataset.id).nome = v; changed(); return; }
+  if (a === 'anonome'){ const an = byId(S.anos, el.dataset.id); an.nome = v; an.curto = v.replace(/\s*(ano|série|serie)\s*$/i, '').trim() || v; save(); return; }
+  if (a === 'tnome'){ byId(S.turmas, el.dataset.id).nome = v; changed(); return; }
+  if (a === 'dnome'){ byId(S.disciplinas, el.dataset.id).nome = v; changed(); return; }
+  if (a === 'dsig'){ byId(S.disciplinas, el.dataset.id).sigla = v.toUpperCase(); changed(); return; }
+  if (a === 'pnome'){ const p = byId(S.professores, el.dataset.id); p.nome = v; p.auto = false; changed(); return; }
+  if (a === 'qtd'){ clearTimeout(qTimer); qTimer = setTimeout(() => aplicarQtd(el), 350); return; }
+  if (a === 'dcarga'){ let n = parseInt(v, 10); if (isNaN(n) || n < 0) n = 0; byId(S.disciplinas, el.dataset.id).carga[el.dataset.r] = Math.min(40, n); changed(); refreshDisc(); return; }
+  if (a === 'an'){
+    const t = byId(S.turmas, el.dataset.t), d = byId(S.disciplinas, el.dataset.d);
+    if (v === '') setAtrib(t.id, d.id, 'n', null);
+    else { const n = Math.max(0, Math.min(40, parseInt(v, 10) || 0)); setAtrib(t.id, d.id, 'n', n === (+d.carga[t.h] || 0) ? null : n); }
+    el.classList.toggle('ov', S.atrib[t.id][d.id].n != null);
+    el.closest('td').classList.toggle('zero', aulas(t, d) === 0);
+    changed(); refreshAtrib(t.id);
+  }
+}
+function onChange(e){
+  const el = e.target, c = el.dataset.c;
+  if (el.dataset.a === 'qtd'){ aplicarQtd(el); return; }
+  if (!c) return;
+  const H = el.dataset.id ? byId(S.horarios, el.dataset.id) : null, x = +el.dataset.x;
+  if (c === 'esc'){
+    const k = el.dataset.key; let v = el.type === 'checkbox' ? el.checked : el.value;
+    if (k === 'tempo'){ S.escola.tempo = +v; save(); return; }
+    if (k !== 'gem'){ v = parseInt(v, 10); const lim = {dias:[5,6], dur:[20,120], maxDia:[1,6]}[k]; if (isNaN(v)) v = S.escola[k]; v = Math.max(lim[0], Math.min(lim[1], v)); }
+    S.escola[k] = v; changed(); render(); return;
+  }
+  if (c === 'hini'){ if (/^\d{1,2}:\d{2}$/.test(el.value)){ H.inicio = el.value; changed(); } render(); return; }
+  if (c === 'hlim'){ const old = H.limite; H.limite = Math.max(1, Math.min(60, parseInt(el.value, 10) || LIM_DEF)); const n = aplicarHorario(H, 'limite', old);
+    hMsg[H.id] = `Limite ${H.limite} aplicado a ${n} professor${n === 1 ? '' : 'es'} deste horário.`; changed(); render(); return; }
+  if (c === 'hpl'){ const v = parseInt(el.value, 10); H.pl = Math.max(0, Math.min(30, isNaN(v) ? 0 : v));
+    const ex = [H.limite, Math.round(H.limite * 2 / 3), Math.round(H.limite / 3)].map(n => `${n} aulas → ${Math.round(n * H.pl / H.limite)} PL`).join(' · ');
+    hMsg[H.id] = `PL proporcional às aulas de cada professor: ${ex}.`; changed(); render(); return; }
+  if (c === 'ppl'){ const p = byId(S.professores, el.dataset.id); p.auto = false; const v = parseInt(el.value, 10); p.pl = Math.max(0, Math.min(30, isNaN(v) ? 0 : v)); p.plModo = 'manual'; changed(); render(); return; }
+  if (c === 'pmodo'){ const p = byId(S.professores, el.dataset.id); p.auto = false; if (el.value === 'manual' && p.plModo !== 'manual') p.pl = plCalc(p); p.plModo = el.value; changed(); render(); return; }
+  if (c === 'pfix'){ const p = byId(S.professores, el.dataset.id); p.auto = false; p.plFix[+el.dataset.d] = Math.max(0, Math.min(14, parseInt(el.value, 10) || 0)); if (p.plModo === 'manual'){ const sf = p.plFix.slice(0, S.escola.dias).reduce((a, b) => a + (+b || 0), 0); if (sf > p.pl) p.pl = sf; } changed(); render(); return; }
+  if (c === 'plim'){ const p = byId(S.professores, el.dataset.id); p.auto = false; p.limite = Math.max(1, Math.min(60, parseInt(el.value, 10) || p.limite)); changed(); render(); return; }
+  if (c === 'haulas'){ H.aulas = Math.max(1, Math.min(14, parseInt(el.value, 10) || H.aulas)); H.intervalos.forEach(iv => { if (iv.apos >= H.aulas) iv.apos = Math.max(1, H.aulas - 1); }); changed(); render(); return; }
+  if (c === 'ivapos'){ H.intervalos[x].apos = +el.value; changed(); render(); return; }
+  if (c === 'ivmin'){ H.intervalos[x].min = Math.max(0, Math.min(240, parseInt(el.value, 10) || 0)); changed(); render(); return; }
+  if (c === 'ivnome'){ H.intervalos[x].nome = el.value; changed(); render(); return; }
+  if (c === 'tano'){ byId(S.turmas, el.dataset.id).ano = el.value; changed(); render(); return; }
+  if (c === 'treg'){ byId(S.turmas, el.dataset.id).h = el.value; if (autoOn()) ajustarEquipe(); changed(); render(); return; }
+  if (c === 'autoProf'){ S.escola.autoProf = el.checked; if (el.checked) ajustarEquipe(); changed(); render(); return; }
+  if (c === 'aprof'){ setAtrib(el.dataset.t, el.dataset.d, 'prof', el.value); const p = byId(S.professores, el.value); if (p && !p.discs.includes(el.dataset.d)) p.discs.push(el.dataset.d); distMsg = ''; changed(); render(); return; }
+
+}
+function onClick(e){
+  const b = e.target.closest('[data-k]'); if (!b) return;
+  const k = b.dataset.k, id = b.dataset.id;
+  if (k !== 'reset' && resetArmed) resetArmed = false;
+  switch (k){
+    case 'go': distMsg = ''; hMsg = {}; step = +b.dataset.s; render(); window.scrollTo({top: 0}); if (step === 5 && !R && !running && !validar().errs.length) gerar(false); return;
+    case 'dur': S.escola.dur = +b.dataset.v; changed(); render(); return;
+    case 'addH': { const h = newHorario(); h.nome = 'Novo horário'; S.horarios.push(h); pendingFocus = 'hn-' + h.id; changed(); render(); return; }
+    case 'dupH': { const src = byId(S.horarios, id), h = JSON.parse(JSON.stringify(src)); h.id = nid('h'); h.nome = src.nome + ' (cópia)'; S.horarios.splice(S.horarios.indexOf(src) + 1, 0, h);
+      for (const d of S.disciplinas) d.carga[h.id] = +d.carga[src.id] || 0; pendingFocus = 'hn-' + h.id; changed(); render(); return; }
+    case 'delH': { if (S.horarios.length < 2) return; S.horarios = S.horarios.filter(h => h.id !== id);
+      S.turmas.forEach(t => { if (t.h === id) t.h = S.horarios[0].id; }); S.disciplinas.forEach(d => delete d.carga[id]); changed(); render(); return; }
+    case 'addIv': { const h = byId(S.horarios, id); const used = new Set(h.intervalos.map(iv => iv.apos)); let a = Math.min(h.aulas - 1, 3); while (used.has(a) && a < h.aulas - 1) a++;
+      h.intervalos.push({apos: a, min: 20, nome: 'Intervalo'}); pendingFocus = `ivn-${id}-${h.intervalos.length - 1}`; changed(); render(); return; }
+    case 'delIv': byId(S.horarios, id).intervalos.splice(+b.dataset.x, 1); changed(); render(); return;
+    case 'addT': { const last = S.turmas[S.turmas.length - 1]; const t = {id: nid('t'), nome: `Turma ${S.turmas.length + 1}`, h: last ? last.h : S.horarios[0].id, ano: ''}; S.turmas.push(t); pendingFocus = 'tn-' + t.id; changed(); render(); return; }
+    case 'addAno': { const a = {id: nid('a'), nome: '', curto: ''}; S.anos.push(a); pendingFocus = 'an-nome-' + a.id; changed(); render(); return; }
+    case 'delAno': S.anos = S.anos.filter(a => a.id !== id); S.turmas.forEach(t => { if (t.ano === id) t.ano = ''; }); changed(); render(); return;
+    case 'criarDist': { distribuirTodas(); const n = criarFaltantes(); const rest = S.disciplinas.reduce((s, d) => s + demandaInfo(d).un, 0);
+      distMsg = `${n} professor(es) criado(s) e turmas distribuídas.` + (rest ? ` Ainda faltam ${rest} aulas sem professor.` : ' Veja e renomeie na etapa Professores.'); changed(); render(); return; }
+    case 'delT': S.turmas = S.turmas.filter(t => t.id !== id); delete S.atrib[id]; if (autoOn()) ajustarEquipe(); changed(); render(); return;
+    case 'addD': { const d = {id: nid('d'), nome: 'Nova disciplina', sigla: '', carga: {}}; S.disciplinas.push(d); pendingFocus = 'dn-' + d.id; changed(); render(); return; }
+    case 'delD': S.disciplinas = S.disciplinas.filter(d => d.id !== id); for (const t in S.atrib) delete S.atrib[t][id]; changed(); render(); return;
+    case 'addP': { const p = {id: nid('p'), nome: `Professor(a) ${S.professores.length + 1}`, limite: S.horarios[0].limite || LIM_DEF, plModo: 'auto', pl: 0, plFix: [0,0,0,0,0,0], discs: [], indisp: []}; S.professores.push(p); pendingFocus = 'pn-' + p.id; changed(); render(); return; }
+    case 'delP': S.professores = S.professores.filter(p => p.id !== id); for (const t in S.atrib) for (const d in S.atrib[t]) if (S.atrib[t][d].prof === id) S.atrib[t][d].prof = ''; if (openProf === id) openProf = null; changed(); render(); return;
+    case 'pdisc': { const p = byId(S.professores, id), did = b.dataset.d; p.auto = false; p.discs = p.discs.includes(did) ? p.discs.filter(x => x !== did) : [...p.discs, did]; pendingFocus = null; changed(); render(); return; }
+    case 'distD': { const d = byId(S.disciplinas, b.dataset.d), un = distribuir(d.id); distMsg = un ? `${d.nome}: faltam ${un} aulas sem professor.` : `${d.nome} distribuída.`; changed(); render(); return; }
+    case 'distAll': { const un = distribuirTodas(); distMsg = un ? `Distribuição feita; ${un} aulas ficaram sem professor.` : 'Todas as disciplinas distribuídas dentro dos limites.'; changed(); render(); return; }
+    case 'criarFalt': { const n = criarFaltantes(); const rest = S.disciplinas.reduce((s, d) => s + demandaInfo(d).un, 0); distMsg = `${n} professor(es) criado(s).` + (rest ? ` Ainda faltam ${rest} aulas (alguma turma tem mais aulas do que o limite permite).` : ''); changed(); render(); return; }
+    case 'toggleP': openProf = openProf === id ? null : id; render(); return;
+    case 'unav': { byId(S.professores, id).auto = false; toggleUnav(byId(S.professores, id), [b.dataset.s]); pendingFocus = b.id; changed(); render(); return; }
+    case 'unavDay': { const {a, b: z} = cellRange(), d = +b.dataset.d, ks = []; for (let m = a; m < z; m += 30) ks.push(cellKey(d, m)); byId(S.professores, id).auto = false; toggleUnav(byId(S.professores, id), ks); changed(); render(); return; }
+    case 'unavRow': { const m = +b.dataset.m; byId(S.professores, id).auto = false; toggleUnav(byId(S.professores, id), range(0, S.escola.dias).map(d => cellKey(d, m))); changed(); render(); return; }
+    case 'gerar': gerar(false); return;
+    case 'otimizar': gerar(true); return;
+    case 'tab': resTab = b.dataset.tab; sel = null; render(); return;
+    case 'cell': {
+      if (!R || running) return; const ti = +b.dataset.t, i = +b.dataset.i;
+      if (!sel || sel.ti !== ti) sel = {ti, i};
+      else if (sel.i === i) sel = null;
+      else { R.solver.manualSwap(ti, sel.i, i); R.rep = R.solver.report(); sel = null; }
+      const y = window.scrollY; render(); window.scrollTo({top: y}); return;
+    }
+    case 'copy': if (R) copyText(buildTSV(), b); return;
+    case 'copyjson': copyText(JSON.stringify(S), b); return;
+    case 'import': { const raw = document.getElementById('imp').value.trim(); if (!raw) return;
+      try { S = normalize(JSON.parse(raw)); openProf = null; changed(); render(); } catch(err){ b.textContent = 'Texto inválido: cole os dados completos'; setTimeout(() => { b.textContent = 'Importar'; }, 2500); } return; }
+    case 'sample': loadSample(); openProf = null; changed(); render(); return;
+    case 'reset': if (!resetArmed){ resetArmed = true; render(); return; }
+      resetArmed = false; S = normalize({escola: {nome: 'Minha escola'}}); openProf = null; changed(); render(); return;
+    case 'minha': S.turmas = []; S.professores = []; S.atrib = {}; S.exemplo = false; openProf = null; distMsg = ''; changed(); step = 1; render(); window.scrollTo({top: 0}); return;
+    case 'manterEx': S.exemplo = false; save(); render(); return;
+    case 'zerarQ': S.turmas = S.turmas.filter(t => !t.ano); for (const id in S.atrib) if (!byId(S.turmas, id)) delete S.atrib[id]; if (autoOn()) ajustarEquipe(); changed(); render(); return;
+    case 'closefb': document.getElementById('fb').hidden = true; return;
+  }
+}
+if (main){
+  load();
+  main.addEventListener('input', onInput);
+  main.addEventListener('change', onChange);
+  document.addEventListener('click', onClick);
+  render();
+}
+</script>
+
+</body>
+</html>

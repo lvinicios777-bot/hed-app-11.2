@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'br.escola.gradehoraria'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'br.escola.gradehoraria'
+        minSdk 24
+        targetSdk 34
+        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionName "1.0." + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+    }
+
+    signingConfigs {
+        // chave fixa guardada no repositório: permite instalar versões novas por cima da antiga
+        fixa {
+            storeFile file('grade-horaria.keystore')
+            storePassword 'gradehoraria'
+            keyAlias 'gradehoraria'
+            keyPassword 'gradehoraria'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.fixa
+        }
+        debug {
+            signingConfig signingConfigs.fixa
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}
