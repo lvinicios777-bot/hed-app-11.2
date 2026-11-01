@@ -1,12 +1,13 @@
 """
-HED 11.2 — app Android (Kivy).
+HED 11.1.2 — app Android (Kivy).
 Telas: lista de candidatos · edição · relatório · registrar posição · registro (PR/CC/AC/RP)
-       · posição (FEN → Stockfish + Lichess) · configurações.
+       · posição (FEN → Stockfish + Lichess) · TF × Conversão · configurações.
 Dados salvos em JSON no armazenamento do app.
 """
 import json
 import os
 import threading
+from dataclasses import replace
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -24,8 +25,8 @@ from kivy.uix.slider import Slider
 from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 
-from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_CP, MI_PP, VERSAO,
-                      RESULTADOS, analisar, relatorio, novo_registro, analise_registro)
+from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO,
+                      RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro)
 import hed_fontes as F
 from hed_tabuleiro import TelaAnalise
 
@@ -39,7 +40,8 @@ CICLO = ["—", "1", "½", "0"]
 
 
 def seguro(txt: str) -> str:
-    for a, b in (("→", "->"), ("×", "x"), ("⚠", "!"), ("–", "-"), ("Δ", "d")):
+    for a, b in (("→", "->"), ("×", "x"), ("⚠", "!"), ("–", "-"), ("Δ", "d"),
+                 ("λ", "lambda"), ("τ", "tau"), ("≥", ">="), ("≤", "<=")):
         txt = txt.replace(a, b)
     return txt
 
@@ -75,6 +77,10 @@ def titulo(txt):
     return Label(text=f"[b]{txt}[/b]", markup=True, font_size="20sp", size_hint_y=None, height=dp(44))
 
 
+def plural_notas(n):
+    return "falta 1 nota" if n == 1 else f"faltam {n} notas"
+
+
 def campo(texto="", filtro=None):
     return TextInput(text=texto, multiline=False, input_filter=filtro, size_hint_y=None, height=ALTURA)
 
@@ -91,9 +97,10 @@ class TelaLista(Screen):
         raiz.add_widget(titulo(f"HED {VERSAO}"))
 
         mi = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
-        mi.add_widget(rotulo("MI peões"))
-        self.mi_cp = TextInput(text=str(app.mi_cp), multiline=False, input_filter="float")
-        mi.add_widget(self.mi_cp)
+        mi.add_widget(rotulo("Aval. melhor", font_size="13sp"))
+        self.aval = TextInput(text="" if app.aval_melhor is None else str(app.aval_melhor),
+                              hint_text="ex.: 0.30", multiline=False)
+        mi.add_widget(self.aval)
         mi.add_widget(rotulo("MI pp"))
         self.mi_pp = TextInput(text=str(app.mi_pp), multiline=False, input_filter="float")
         mi.add_widget(self.mi_pp)
@@ -106,7 +113,8 @@ class TelaLista(Screen):
             linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
             wdl = f"  E {c.escore:.0f}%" if c.escore is not None else ""
             marca = "" if c.filtro_ok else "  [filtro X]"
-            b = Button(text=f"{c.lance}   perda {c.delta:.2f}{wdl}   ATP {c.atp:.2f}{marca}",
+            atp = f"ATP {c.atp:.2f}" if c.atp is not None else plural_notas(len(c.faltando()))
+            b = Button(text=f"{c.lance}   perda {c.delta:.2f}{wdl}   {atp}{marca}",
                        background_normal="", background_color=(0.2, 0.22, 0.26, 1))
             b.bind(on_release=lambda _b, i=i: app.editar(i))
             linha.add_widget(b)
@@ -129,6 +137,7 @@ class TelaLista(Screen):
         a3.add_widget(botao("Configurações", lambda: app.ir("config"), CINZA))
         a3.add_widget(botao("Limpar candidatos", self.limpar, CINZA))
         raiz.add_widget(a3)
+        raiz.add_widget(botao("TF × Conversão (limiar p*)", lambda: app.ir("tf"), (0.55, 0.3, 0.3, 1)))
         self.add_widget(raiz)
 
     def remover(self, i):
@@ -145,7 +154,7 @@ class TelaLista(Screen):
 
     def analisar(self):
         app = App.get_running_app()
-        app.mi_cp = num(self.mi_cp.text, MI_CP)
+        app.aval_melhor = num(self.aval.text)
         app.mi_pp = num(self.mi_pp.text, MI_PP)
         app.salvar()
         app.mostrar_relatorio()
@@ -156,6 +165,8 @@ class TelaEdicao(Screen):
     def carregar(self, c: Candidato):
         self.clear_widgets()
         self.sliders = {}
+        self.original = c
+        self.definidos = {k for k in ESTRATEGICOS + DIRETOS if getattr(c, k) is not None}
         corpo = GridLayout(cols=1, spacing=dp(4), padding=dp(10))
 
         corpo.add_widget(rotulo("Lance (ex.: e5, Rd1):"))
@@ -180,6 +191,10 @@ class TelaEdicao(Screen):
             lw.add_widget(t)
         corpo.add_widget(lw)
 
+        dica = Label(text="Nota com — ainda não foi avaliada: toque ou arraste o controle para dar a nota.",
+                     font_size="12sp", size_hint_y=None, height=dp(30), halign="left", valign="middle")
+        dica.bind(size=lambda w, s: setattr(w, "text_size", s))
+        corpo.add_widget(dica)
         corpo.add_widget(Label(text="[b]Núcleo estratégico[/b]", markup=True, size_hint_y=None, height=dp(36)))
         for k in ESTRATEGICOS:
             self._slider(corpo, k, getattr(c, k))
@@ -187,7 +202,9 @@ class TelaEdicao(Screen):
         for k in DIRETOS:
             self._slider(corpo, k, getattr(c, k))
 
-        self.resumo = Label(size_hint_y=None, height=dp(56), markup=True)
+        self.resumo = Label(size_hint_y=None, height=dp(56), markup=True, halign="center", valign="middle")
+        self.resumo.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+                         texture_size=lambda w, t: setattr(w, "height", max(dp(56), t[1] + dp(8))))
         corpo.add_widget(self.resumo)
         self.atualizar()
 
@@ -201,13 +218,21 @@ class TelaEdicao(Screen):
 
     def _slider(self, pai, chave, valor):
         linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
-        lb = Label(text=f"{ROTULOS[chave]}: {valor:.1f}", size_hint_x=0.45, halign="left", valign="middle")
+        txt = f"{ROTULOS[chave]}: {valor:.1f}" if valor is not None else f"{ROTULOS[chave]}: —"
+        lb = Label(text=txt, size_hint_x=0.45, halign="left", valign="middle")
         lb.bind(size=lambda w, s: setattr(w, "text_size", s))
-        s = Slider(min=0, max=10, step=0.5, value=valor, size_hint_x=0.55)
+        s = Slider(min=0, max=10, step=0.5, value=5.0 if valor is None else valor, size_hint_x=0.55)
 
         def mudou(_s, v, lb=lb, k=chave):
+            self.definidos.add(k)
             lb.text = f"{ROTULOS[k]}: {v:.1f}"
             self.atualizar()
+
+        def tocou(sl, toque, lb=lb, k=chave):
+            # um toque no controle também avalia (permite confirmar exatamente 5,0)
+            if sl.collide_point(*toque.pos) and k not in self.definidos:
+                mudou(sl, sl.value, lb, k)
+        s.bind(on_touch_up=tocou)
         s.bind(value=mudou)
         linha.add_widget(lb)
         linha.add_widget(s)
@@ -215,17 +240,25 @@ class TelaEdicao(Screen):
         self.sliders[chave] = s
 
     def _candidato(self):
-        notas = {k: round(s.value, 1) for k, s in self.sliders.items()}
+        notas = {k: (round(s.value, 1) if k in self.definidos else None) for k, s in self.sliders.items()}
         w, d, l = (num(t.text) for t in self.wdl)
-        return Candidato(lance=self.lance.text.strip() or "?", delta=abs(num(self.delta.text, 0.0)),
-                         filtro_ok=self.filtro.active, w=w, d=d, l=l, **notas)
+        delta = abs(num(self.delta.text, 0.0))
+        o = self.original
+        # perda editada à mão: a avaliação do motor deixa de valer para este lance
+        aval = o.aval_cp if abs(delta - o.delta) < 1e-9 else None
+        return replace(o, lance=self.lance.text.strip() or "?", delta=delta, filtro_ok=self.filtro.active,
+                       w=w, d=d, l=l, aval_cp=aval, **notas)
 
     def atualizar(self):
         if not hasattr(self, "resumo"):
             return
         c = self._candidato()
-        self.resumo.text = (f"FO {c.fo:.2f}  ·  Robustez {c.robustez:.2f}  (calculados)\n"
-                            f"[b]ATP {c.atp:.2f}[/b]")
+        if c.atp is None:
+            falta = ", ".join(ROTULOS[k] for k in c.faltando())
+            self.resumo.text = f"[color=ffcc66]{plural_notas(len(c.faltando())).capitalize()}:[/color] {falta}"
+        else:
+            self.resumo.text = (f"FO {c.fo:.2f}  ·  Robustez {c.robustez:.2f}  (calculados)\n"
+                                f"[b]ATP {c.atp:.2f}[/b]")
 
     def salvar(self):
         app = App.get_running_app()
@@ -473,6 +506,61 @@ class TelaPosicao(Screen):
         app.ir("lista")
 
 
+# ---------------------------------------------------------------- TF × Conversão
+class TelaTF(Screen):
+    """Regra de conflito da 11.1.2: a TF só vence o lance tranquilo se p > p*."""
+
+    def on_enter(self, *_):
+        if not getattr(self, "montada", False):
+            self.montar()
+
+    def montar(self):
+        app = App.get_running_app()
+        self.montada = True
+        self.clear_widgets()
+        corpo = GridLayout(cols=1, spacing=dp(4), padding=dp(10))
+        corpo.add_widget(titulo("TF × Conversão"))
+        ajuda = Label(text="Avaliações em peões, do ponto de vista de quem joga (ex.: 2.0, -1.5).",
+                      font_size="12sp", size_hint_y=None, height=dp(30), halign="left", valign="middle")
+        ajuda.bind(size=lambda w, s: setattr(w, "text_size", s))
+        corpo.add_widget(ajuda)
+        self.campos = {}
+        for chave, txt, padrao in (("tranq", "Depois do lance tranquilo:", "2.0"),
+                                   ("fim", "Fim da TF, se o cálculo estiver certo:", "4.0"),
+                                   ("falha", "Se o cálculo estiver errado:", "-2.0"),
+                                   ("p", "Sua confiança no cálculo (%):", "")):
+            corpo.add_widget(rotulo(txt))
+            t = campo(app.tf.get(chave, padrao))
+            if chave == "p":
+                t.hint_text = "opcional (com motor: 100)"
+            self.campos[chave] = t
+            corpo.add_widget(t)
+        self.saida = Label(text="", size_hint_y=None, halign="left", valign="top",
+                           font_name="RobotoMono-Regular", font_size="13sp")
+        self.saida.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+                        texture_size=lambda w, t: setattr(w, "height", t[1] + dp(8)))
+        corpo.add_widget(self.saida)
+
+        raiz = BoxLayout(orientation="vertical")
+        raiz.add_widget(rolavel(corpo))
+        acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(8), padding=(dp(10), 0))
+        acoes.add_widget(botao("Voltar", lambda: app.ir("lista"), CINZA))
+        acoes.add_widget(botao("Calcular", self.calcular, VERDE))
+        raiz.add_widget(acoes)
+        self.add_widget(raiz)
+
+    def calcular(self):
+        app = App.get_running_app()
+        v = {k: num(t.text) for k, t in self.campos.items()}
+        if None in (v["tranq"], v["fim"], v["falha"]):
+            self.saida.text = "Preencha as três avaliações."
+            return
+        app.tf = {k: t.text for k, t in self.campos.items()}
+        app.salvar()
+        p = None if v["p"] is None else max(0.0, min(100.0, v["p"])) / 100
+        self.saida.text = seguro(relatorio_tf(v["tranq"] * 100, v["fim"] * 100, v["falha"] * 100, p))
+
+
 # ---------------------------------------------------------------- Configurações
 class TelaConfig(Screen):
     def on_enter(self, *_):
@@ -551,7 +639,8 @@ class HEDApp(App):
     def build(self):
         self.arquivo = os.path.join(self.user_data_dir, "hed_dados.json")
         self.cands, self.registro = [], []
-        self.mi_cp, self.mi_pp, self.indice = MI_CP, MI_PP, None
+        self.aval_melhor, self.mi_pp, self.indice = None, MI_PP, None
+        self.tf = {}
         self.ultimo, self.ultima_estrutura = None, ""
         self.cfg, self.fen = dict(F.CFG_PADRAO), ""
         self.partida = {"inicio": FEN_INICIAL, "lances": [], "idx": 0}
@@ -560,7 +649,8 @@ class HEDApp(App):
         self.sm = ScreenManager(transition=NoTransition())
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
                           ("registrar", TelaRegistrar), ("registro", TelaRegistro),
-                          ("posicao", TelaPosicao), ("config", TelaConfig), ("analise", TelaAnalise)):
+                          ("posicao", TelaPosicao), ("config", TelaConfig), ("analise", TelaAnalise),
+                          ("tf", TelaTF)):
             self.sm.add_widget(cls(name=nome))
         self.sm.current = "lista"
         return self.sm
@@ -586,8 +676,9 @@ class HEDApp(App):
         try:
             with open(self.arquivo, encoding="utf-8") as f:
                 dados = json.load(f)
-            self.mi_cp = dados.get("mi_cp", MI_CP)
+            self.aval_melhor = dados.get("aval_melhor")
             self.mi_pp = dados.get("mi_pp", MI_PP)
+            self.tf = dados.get("tf", {})
             self.cands = [Candidato.de_dict(d) for d in dados.get("cands", [])]
             self.registro = dados.get("registro", [])
             self.ultima_estrutura = dados.get("ultima_estrutura", "")
@@ -600,7 +691,7 @@ class HEDApp(App):
     def salvar(self):
         try:
             with open(self.arquivo, "w", encoding="utf-8") as f:
-                json.dump({"mi_cp": self.mi_cp, "mi_pp": self.mi_pp,
+                json.dump({"aval_melhor": self.aval_melhor, "mi_pp": self.mi_pp, "tf": self.tf,
                            "cands": [c.para_dict() for c in self.cands],
                            "registro": self.registro, "ultima_estrutura": self.ultima_estrutura,
                            "cfg": self.cfg, "fen": self.fen, "partida": self.partida},
@@ -619,12 +710,13 @@ class HEDApp(App):
         self.ir("edicao")
 
     def mostrar_relatorio(self):
-        r = analisar(self.cands, self.mi_cp, self.mi_pp)
+        aval = None if self.aval_melhor is None else self.aval_melhor * 100
+        r = analisar(self.cands, aval, self.mi_pp)
         self.ultimo = r if "escolha" in r else None
         botoes = [("Voltar", lambda: self.ir("lista"), CINZA)]
         if self.ultimo:
             botoes.append(("Registrar", self.abrir_registrar, VERDE))
-        self.sm.get_screen("texto").mostrar(relatorio(self.cands, self.mi_cp, self.mi_pp), botoes)
+        self.sm.get_screen("texto").mostrar(relatorio(self.cands, aval, self.mi_pp), botoes)
         self.ir("texto")
 
     def abrir_registrar(self):

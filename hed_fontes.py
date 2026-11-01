@@ -537,13 +537,17 @@ def melhor_cp(opcoes: List[Opcao]) -> Optional[int]:
 
 
 def para_candidato(o: Opcao, ref_cp: int):
-    """Converte uma Opcao em Candidato do HED (perda em peões vs melhor lance do motor)."""
-    from hed_core import Candidato
+    """Converte uma Opcao em Candidato do HED (perda em peões vs melhor lance do motor).
+
+    Leva a avaliação (para a pontuação esperada), o WDL e as notas sugeridas pelo próprio
+    lance (Reversibilidade/Forçamento); as demais notas ficam vazias até o jogador avaliar.
+    """
+    from hed_core import Candidato, aplicar_sugestoes
     delta = round(max(0, ref_cp - o.cp) / 100, 2)
     w = d = l = None
     if o.wdl:
         w, d, l = (x / 10 for x in o.wdl)
-    c = Candidato(lance=o.san, delta=delta, w=w, d=d, l=l)
+    c = aplicar_sugestoes(Candidato(lance=o.san, delta=delta, w=w, d=d, l=l, aval_cp=o.cp))
     if o.masters:
         c.n_masters, c.pts_masters = o.masters.n, round(o.masters.pts, 3)
     if o.lichess:
