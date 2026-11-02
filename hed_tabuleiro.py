@@ -26,6 +26,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 
+import hed_classe as KC
 import hed_fontes as F
 
 CLARA, ESCURA = (0.941, 0.851, 0.710, 1), (0.710, 0.533, 0.388, 1)      # cores do Lichess
@@ -52,10 +53,10 @@ def imagem_peca(peca):
     return _imagens[nome]
 
 
-def textura(txt, tam, fonte="DejaVuSans"):
-    chave = (txt, int(tam), fonte)
+def textura(txt, tam, fonte="DejaVuSans", negrito=False):
+    chave = (txt, int(tam), fonte, negrito)
     if chave not in _texturas:
-        lb = CoreLabel(text=txt, font_size=int(tam), font_name=fonte)
+        lb = CoreLabel(text=txt, font_size=int(tam), font_name=fonte, bold=negrito)
         lb.refresh()
         _texturas[chave] = lb.texture
     return _texturas[chave]
@@ -90,6 +91,7 @@ class Tabuleiro(Widget):
         self.seta = None
         self.setas_extra = []        # [(uci, rgba, número ou None)] — setas do plano
         self.marcas = []             # [(casa, rgba)] — casas destacadas (alvos)
+        self.selo = None             # (casa, classe) — selo do último lance, estilo chess.com
         self.bind(pos=self.desenhar, size=self.desenhar)
 
     # ---- geometria
@@ -180,11 +182,28 @@ class Tabuleiro(Widget):
                 Line(rectangle=(x + 2, y + 2, L - 4, L - 4), width=L * 0.05)
             for uci, cor, num in self.setas_extra:
                 self._desenhar_seta(uci, L, cor, num)
+            if self.selo and not self.arraste:
+                self._desenhar_selo(*self.selo, L)
             if self.arraste:
                 casa, ax, ay = self.arraste
                 peca = self.board.piece_at(casa)
                 if peca:
                     self._peca(peca, ax - L * 0.6, ay - L * 0.6, L * 1.2)
+
+    def _desenhar_selo(self, casa, classe, L):
+        """Círculo colorido com o símbolo no canto superior direito da casa (como no chess.com)."""
+        x, y = self._xy(casa)
+        r = L * 0.24
+        cx, cy = x + L - r * 0.85, y + L - r * 0.85
+        Color(0, 0, 0, 0.35)
+        Ellipse(pos=(cx - r, cy - r - L * 0.02), size=(2 * r, 2 * r))
+        Color(1, 1, 1, 1)
+        Ellipse(pos=(cx - r - 1.5, cy - r - 1.5), size=(2 * r + 3, 2 * r + 3))
+        Color(*KC.rgba(classe))
+        Ellipse(pos=(cx - r, cy - r), size=(2 * r, 2 * r))
+        t = textura(KC.CLASSES[classe][1], r * 1.15, "DejaVuSans", True)
+        Color(1, 1, 1, 1)
+        Rectangle(texture=t, pos=(cx - t.width / 2, cy - t.height / 2), size=t.size)
 
     def _peca(self, peca, x, y, L):
         tex = imagem_peca(peca)
@@ -576,6 +595,8 @@ class TelaAnalise(Screen):
         self._ultimas = None
         self._limpar_estado_lc0()
         self.l_lc0.text = ""
+        self.tab.selo = None
+        self._selo_ultimo()
         self.caixa_linhas.clear_widgets()
         self.l_aval.text = ""
         self.l_info.text = ""
@@ -815,7 +836,10 @@ class TelaAnalise(Screen):
         cp_b = (o1.cp if branco else -o1.cp) if o1.cp is not None else None
         self.barra.definir(F.chance_brancas(cp_b))
         self.l_info.text = f"{fonte}\nprof. {prof}{' ...' if pensando else ''}"
-        if self.tab.seta != o1.uci:
+        self._registrar_aval(b, ops)
+        selo_antes = self.tab.selo
+        self._selo_ultimo()
+        if self.tab.seta != o1.uci or self.tab.selo != selo_antes:
             self.tab.seta = o1.uci
             self.tab.desenhar()
         if [o.uci for o, _ in self._botoes] != [o.uci for o in ops]:
@@ -833,6 +857,62 @@ class TelaAnalise(Screen):
             self._botoes = [(o, bt) for o, (_, bt) in zip(ops, self._botoes)]
         self._atualizar_textos()
 
+    # ---- classificação estilo chess.com (pela avaliação do Stockfish: instantânea e estável)
+    def _registrar_aval(self, b, ops):
+        """Guarda o E (%) de cada lance analisado nesta posição, para classificar o lance que for jogado."""
+        es = [(o.uci, KC.e_de_cp(o.cp)) for o in ops if o.cp is not None]
+        if not es:
+            return
+        hist = getattr(self, "_hist", None)
+        if hist is None:
+            hist = self._hist = {}
+        d = hist.setdefault(b.fen(), {"moves": {}})
+        d["moves"].update(dict(es))
+        d["best"], d["melhor_uci"] = es[0][1], es[0][0]
+        d["segundo"] = es[1][1] if len(es) > 1 else None
+        if len(hist) > 400:
+            hist.pop(next(iter(hist)))
+
+    def _livro(self, fen, uci):
+        est = (self._cache_exp.get((fen, "masters")) or ({},))[0]
+        if uci in est and est[uci].n >= 50:
+            return True
+        est = (self._cache_exp.get((fen, "lichess")) or ({},))[0]
+        return uci in est and est[uci].n >= 1000
+
+    def _classe_lance(self, antes, m, depois=None):
+        """Classe do lance m jogado na posição `antes` (None se ainda faltar avaliação)."""
+        hist = getattr(self, "_hist", {})
+        d = hist.get(antes.fen())
+        if not d:
+            return None
+        e = d["moves"].get(m.uci())
+        if e is None and depois is not None:
+            if depois.is_checkmate():
+                e = 100.0
+            elif depois.is_game_over():
+                e = 50.0
+            else:
+                q = hist.get(depois.fen())
+                e = 100 - q["best"] if q else None
+        livro = antes.fullmove_number <= 15 and self._livro(antes.fen(), m.uci())
+        return KC.classificar(d["best"], e, eh_melhor=(m.uci() == d["melhor_uci"]), segundo=d["segundo"],
+                              board=antes, move=m, livro=livro)
+
+    def _selo_ultimo(self):
+        p = App.get_running_app().partida
+        if p["idx"] <= 0:
+            self.tab.selo = None
+            return
+        antes = chess.Board(p["inicio"])
+        for u in p["lances"][: p["idx"] - 1]:
+            antes.push_uci(u)
+        m = antes.parse_uci(p["lances"][p["idx"] - 1])
+        depois = antes.copy()
+        depois.push(m)
+        k = self._classe_lance(antes, m, depois)
+        self.tab.selo = (m.to_square, k) if k else None
+
     def _atualizar_textos(self):
         """Só troca os textos das linhas (Stockfish + Lc0); os botões continuam os mesmos."""
         self._resumo_lc0()
@@ -842,9 +922,18 @@ class TelaAnalise(Screen):
         branco = b.turn == chess.WHITE
         usa_lc0 = self._quer_lc0()
         res = self._lc0_res
+        d = getattr(self, "_hist", {}).get(b.fen())
         for o, bt in self._botoes:
             num = f"{b.fullmove_number}." if branco else f"{b.fullmove_number}..."
-            txt = f"[b]{F.texto_aval(o, branco):>6}[/b]  {num} {' '.join(o.pv[:8])}"
+            k = None
+            if d and o.cp is not None:
+                try:
+                    k = self._classe_lance(b, chess.Move.from_uci(o.uci))
+                except Exception:
+                    k = None
+            sim = (f"[font=DejaVuSans][b][color={KC.CLASSES[k][2]}]{KC.CLASSES[k][1]:<2}[/color][/b][/font]"
+                   if k else "  ")
+            txt = f"{sim} [b]{F.texto_aval(o, branco):>6}[/b]  {num} {' '.join(o.pv[:8])}"
             x = res.get(o.uci)
             if x and x.wdl:
                 w, d, l = (round(v / 10) for v in x.wdl)

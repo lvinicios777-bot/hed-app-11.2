@@ -27,6 +27,7 @@ from kivy.uix.textinput import TextInput
 
 from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO, FILTRO_ITENS, FILTRO_ROTULOS,
                       RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro)
+import hed_classe as KC
 import hed_fontes as F
 import hed_auto as A
 import hed_livro as LV
@@ -608,12 +609,22 @@ class TelaPosicao(Screen):
 
 
 # ---------------------------------------------------------------- Resumo (tela principal do resultado)
-CONFIANCA = {"A+": ("muito alta", (0.2, 0.6, 0.35, 1)), "A": ("alta", (0.2, 0.6, 0.35, 1)),
-             "B": ("boa", (0.25, 0.45, 0.75, 1)), "C": ("média", (0.75, 0.55, 0.15, 1)),
-             "D": ("baixa", (0.6, 0.2, 0.2, 1))}
-SELO = {"recomendado": ("RECOMENDADO", (0.2, 0.6, 0.35, 1)), "alternativa": ("BOA ALTERNATIVA", (0.25, 0.45, 0.75, 1)),
-        "possivel": ("POSSÍVEL", (0.35, 0.35, 0.35, 1)), "inferior": ("INFERIOR", (0.55, 0.45, 0.2, 1)),
-        "evitar": ("EVITAR", (0.6, 0.2, 0.2, 1))}
+# cores no padrão do chess.com: verde = melhor, amarelo = imprecisão, laranja = duvidoso, vermelho = capivarada
+CONFIANCA = {"A+": ("Escolha clara", "melhor"), "A": ("Escolha clara", "melhor"),
+             "B": ("Escolha boa", "bom"), "C": ("Escolha apertada", "imprecisao"),
+             "D": ("Duvidoso", "erro")}
+SELO = {"recomendado": ("Recomendado", "81b64c"), "alternativa": ("Boa alternativa", "749bbf"),
+        "possivel": ("Possível", "aaaaaa"), "inferior": ("Inferior", "aaaaaa"),
+        "evitar": ("Evitar", "ffa459")}
+
+
+def selo_classe(chave, grande=False):
+    """Selo no estilo do chess.com: símbolo colorido + nome."""
+    if not chave:
+        return ""
+    nome, simb, cor = KC.CLASSES[chave]
+    t = "20sp" if grande else "15sp"
+    return f"[size={t}][font=DejaVuSans][b][color={cor}]{simb}[/color][/b][/font] [color={cor}]{nome}[/color][/size]"
 
 
 def texto_quebrado(txt, tamanho="15sp", **kw):
@@ -635,12 +646,16 @@ class TelaResumo(Screen):
                 corpo.add_widget(texto_quebrado(seguro("• " + a)))
         else:
             nivel = r["ife"][0]
-            conf, cor = CONFIANCA[nivel]
+            conf, classe = CONFIANCA[nivel]
+            if nivel == "D" and r.get("empate"):
+                conf, classe = "Empate técnico: " + " ≈ ".join(r["empate"]), "otimo"   # azul: tanto faz
+            cor = KC.rgba(classe)
             corpo.add_widget(Label(text="JOGUE", font_size="16sp", size_hint_y=None, height=dp(24)))
             corpo.add_widget(Label(text=f"[b]{r['escolha']}[/b]", markup=True, font_size="44sp",
                                    size_hint_y=None, height=dp(60)))
-            caixa = Button(text=f"Confiança {conf}", background_normal="", background_color=cor,
-                           size_hint_y=None, height=dp(36), font_size="15sp")
+            caixa = Button(text=conf, background_normal="", background_color=cor,
+                           size_hint_y=None, height=dp(36), font_size="15sp",
+                           color=(0.12, 0.12, 0.12, 1) if classe == "imprecisao" else (1, 1, 1, 1))
             corpo.add_widget(caixa)
             mot = self._motores()
             if mot:
@@ -718,6 +733,31 @@ class TelaResumo(Screen):
             else:
                 selo, motivo = "possivel", (a.get("contra") or ["um pouco abaixo no conjunto"])[0]
             out.append((c, selo, motivo))
+        self._classes = self._classificar(r)
+        return out
+
+    def _classificar(self, r):
+        """Classe chess.com de cada candidato, com o mesmo E da decisão do HED (WDL do Lc0 quando houver)."""
+        import chess
+        app = App.get_running_app()
+        E = {k: v for k, v in (r.get("E") or {}).items() if v is not None}
+        if not E:
+            return {}
+        ordem = sorted(E.values(), reverse=True)
+        melhor, segundo = ordem[0], (ordem[1] if len(ordem) > 1 else None)
+        out = {}
+        for c in app.cands:
+            if c.lance not in E:
+                continue
+            b = mv = None
+            try:
+                b = chess.Board(c.analise["fen"])
+                mv = b.parse_san(c.lance)
+            except Exception:
+                pass
+            livro = bool(c.n_masters and c.n_masters >= 50 and b is not None and b.fullmove_number <= 15)
+            out[c.lance] = KC.classificar(melhor, E[c.lance], eh_melhor=E[c.lance] >= melhor - 1e-9,
+                                          segundo=segundo, board=b, move=mv, livro=livro)
         return out
 
     @staticmethod
@@ -746,12 +786,16 @@ class TelaResumo(Screen):
     def _cartao(self, c, selo, motivo):
         app = App.get_running_app()
         nome, cor = SELO[selo]
-        caixa = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(150), spacing=dp(2))
+        classe = getattr(self, "_classes", {}).get(c.lance)
+        caixa = GridLayout(cols=1, size_hint_y=None, spacing=dp(2), padding=(0, dp(6), 0, dp(10)))
+        caixa.bind(minimum_height=caixa.setter("height"))
         topo = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(6))
         topo.add_widget(Label(text=f"[b]{c.lance}[/b]", markup=True, font_size="20sp", size_hint_x=0.3))
-        topo.add_widget(Button(text=nome, background_normal="", background_color=cor, font_size="13sp",
-                               size_hint_x=0.7))
+        lb = Label(text=selo_classe(classe, True), markup=True, size_hint_x=0.7, halign="left", valign="middle")
+        lb.bind(size=lambda w, s: setattr(w, "text_size", s))
+        topo.add_widget(lb)
         caixa.add_widget(topo)
+        caixa.add_widget(texto_quebrado(f"[b][color={cor}]HED: {nome}[/color][/b]", "14sp"))
         perda = "igual ao melhor do Stockfish" if c.delta < 0.005 else f"{c.delta:.2f} peão abaixo do melhor do Stockfish"
         caixa.add_widget(texto_quebrado(seguro(self._linha_motores(c)), "13sp"))
         caixa.add_widget(texto_quebrado(seguro(f"{perda} · {motivo}"), "13sp"))

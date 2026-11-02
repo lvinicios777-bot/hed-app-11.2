@@ -71,6 +71,11 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.16 — classificação no estilo do chess.com
+- Classes e cores do chess.com, com os limiares oficiais de perda de pontos esperados: ★ Melhor (≤ 0) · ✓ Excelente (≤ 0,02) · ✓ Bom (≤ 0,05) · ?! Imprecisão (≤ 0,10, amarelo) · ? Erro (≤ 0,20, laranja) · ?? Capivarada (> 0,20, vermelho); especiais: !! Brilhante (sacrifício bom), ! Ótimo (único lance bom), ≡ Teoria (livro), ✗ Perdeu a chance (`hed_classe.py`).
+- Resumo: cada lance mostra a classe (com o mesmo E da decisão do HED) e, embaixo, o papel no HED. A caixa de confiança segue as cores: verde = escolha clara, amarelo = apertada, azul = empate técnico (tanto faz), laranja = duvidoso.
+- Análise ao vivo: selo no canto da casa do último lance (como no chess.com) e símbolo colorido em cada linha do motor; usa a avaliação do Stockfish (instantânea).
+
 ## Novidades da 11.1.2.15 — peças novas
 - Peças desenhadas com o conjunto "cburnett" (o mesmo padrão do Lichess), em imagem de alta resolução, no tabuleiro, no arraste, na promoção e no tabuleiro do plano. Créditos em `pecas/LEIA-ME.md`.
 
