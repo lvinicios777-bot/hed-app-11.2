@@ -71,6 +71,13 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.14 — Lc0 forçado nos lances do Stockfish e posição livre
+- Tabuleiro/análise: o Lc0 calcula **à força** os 3 lances do Stockfish (searchmoves), mesmo quando discorda, e também o lance que ele próprio prefere. Se o Lc0 não aceitar algum lance (ex.: roque), ele é avaliado pela posição depois do lance.
+- Valores provisórios aparecem com "..."; sem "..." é o cálculo completo.
+- Botão **Posição...**: colar/digitar FEN ou PGN, voltar à posição inicial ou limpar. Qualquer posição, a qualquer momento.
+- A tela não recria mais as linhas a cada atualização (só troca o texto): toques e rolagem não "travam".
+- Ao sair da tela ou trocar de posição, o cálculo antigo do Lc0 é encerrado.
+
 ## Novidades da 11.1.2.13 — Lc0 ao vivo na tela de análise
 - Tabuleiro/análise: cada linha do Stockfish (ou da nuvem) mostra embaixo o WDL do Lc0 ao vivo (V/Emp/D e E).
 - Linha abaixo da barra: "Lc0 concorda com o Stockfish", "X e Y equivalentes" (diferença < 1 pp) ou "Lc0 prefere X".

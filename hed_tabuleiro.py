@@ -6,6 +6,7 @@ seta do melhor lance, navegação pelos lances, explorador Masters/Lichess,
 colar FEN/PGN e envio da posição ao HED.
 """
 import threading
+import time
 
 import chess
 from kivy.app import App
@@ -21,6 +22,7 @@ from kivy.uix.label import Label
 from kivy.uix.modalview import ModalView
 from kivy.uix.screenmanager import Screen
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 
 import hed_fontes as F
@@ -329,6 +331,7 @@ class TelaAnalise(Screen):
         app = App.get_running_app()
         if app.motor:
             app.motor.parar()
+        self._gen = getattr(self, "_gen", 0) + 1         # encerra as tarefas do Lc0 desta tela
         self._parar_lc0()
 
     # ---- partida
@@ -428,13 +431,14 @@ class TelaAnalise(Screen):
 
         baixo = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(3))
         baixo.add_widget(botao("Voltar", lambda: app.ir("lista"), CINZA, font_size="13sp"))
-        baixo.add_widget(botao("Colar FEN/PGN", self.colar, CINZA, font_size="13sp"))
+        baixo.add_widget(botao("Posição...", self.abrir_posicao, (0.25, 0.45, 0.75, 1), font_size="13sp"))
         baixo.add_widget(botao("Copiar FEN", self.copiar, CINZA, font_size="13sp"))
         baixo.add_widget(botao("Enviar ao HED", self.enviar_hed, (0.7, 0.45, 0.15, 1), font_size="13sp"))
         raiz.add_widget(baixo)
         self.add_widget(raiz)
         self._ultimas = None
-        self._sf, self._lc0, self._lc0_chave = None, [], None
+        self._limpar_estado_lc0()
+        self._lc0_trava = threading.Lock()
 
     # ---- ações
     def alternar_motor(self):
@@ -470,6 +474,46 @@ class TelaAnalise(Screen):
         self.status.text = f"Carregado: {'PGN com ' + str(len(lances)) + ' lances' if lances else 'FEN'}"
         self.atualizar()
 
+    def abrir_posicao(self):
+        """Escolher qualquer posição: colar FEN/PGN, digitar, ou voltar à inicial."""
+        app = App.get_running_app()
+        mv = ModalView(size_hint=(0.94, None), height=dp(330), auto_dismiss=True)
+        caixa = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
+        caixa.add_widget(Label(text="[b]Nova posição[/b]", markup=True, size_hint_y=None, height=dp(26)))
+        campo = TextInput(text=self._board().fen(), multiline=True, font_size="13sp",
+                          hint_text="FEN ou PGN (lances)")
+        caixa.add_widget(campo)
+        aviso = Label(text="", font_size="12sp", size_hint_y=None, height=dp(20), color=(1, 0.8, 0.4, 1))
+        caixa.add_widget(aviso)
+
+        def usar(texto):
+            try:
+                inicio, lances = F.ler_partida(texto or "")
+            except Exception as e:
+                aviso.text = f"Não consegui ler: {e}"
+                return
+            app.partida = {"inicio": inicio, "lances": lances, "idx": len(lances)}
+            app.partida_backup = None
+            app.salvar()
+            mv.dismiss()
+            self.status.text = f"Posição carregada{' (PGN com ' + str(len(lances)) + ' lances)' if lances else ''}."
+            self.atualizar()
+
+        def colar():
+            campo.text = Clipboard.paste() or ""
+
+        l1 = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
+        l1.add_widget(botao("Colar", colar, CINZA, font_size="14sp"))
+        l1.add_widget(botao("Limpar", lambda: setattr(campo, "text", ""), CINZA, font_size="14sp"))
+        l1.add_widget(botao("Inicial", lambda: usar(chess.STARTING_FEN), CINZA, font_size="14sp"))
+        caixa.add_widget(l1)
+        l2 = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        l2.add_widget(botao("Cancelar", mv.dismiss, CINZA, font_size="14sp"))
+        l2.add_widget(botao("Usar esta posição", lambda: usar(campo.text), VERDE, font_size="14sp"))
+        caixa.add_widget(l2)
+        mv.add_widget(caixa)
+        mv.open()
+
     def copiar(self):
         Clipboard.copy(self._board().fen())
         self.status.text = "FEN copiado."
@@ -499,7 +543,7 @@ class TelaAnalise(Screen):
         self.tab.seta = None
         self._gen += 1
         self._ultimas = None
-        self._sf, self._lc0, self._lc0_chave = None, [], None
+        self._limpar_estado_lc0()
         self.l_lc0.text = ""
         self.caixa_linhas.clear_widgets()
         self.l_aval.text = ""
@@ -545,83 +589,167 @@ class TelaAnalise(Screen):
         app = App.get_running_app()
         if not self.motor_ligado:
             return
-        mudou = False
         if self._usa_local():
             ops, prof = app.motor.linhas()
             chave = (prof, tuple((o.uci, o.cp, o.mate) for o in ops))
             if ops and chave != self._ultimas:
                 self._ultimas = chave
                 self._sf = (ops, prof, app.motor.nome, app.motor.pensando)
-                mudou = True
-        lc = self._lc0_linhas()
-        if lc is not None:
-            ch = (tuple((o.uci, o.wdl) for o in lc), app.lc0.pensando)
-            if ch != self._lc0_chave:
-                self._lc0_chave, self._lc0 = ch, lc
-                mudou = True
-        if mudou:
-            if self._sf:
+                self._sf_fen = self.tab.board.fen()
+                self._sf_desde = self._sf_desde or time.time()
                 self._mostrar_linhas(*self._sf)
-            else:
-                self._resumo_lc0()
+                return
+        # Lc0: redesenha no máximo ~2x por segundo, sem recriar os botões
+        if self._lc0_ver != self._lc0_ver_vista and time.time() - self._lc0_quando > 0.5:
+            self._lc0_ver_vista, self._lc0_quando = self._lc0_ver, time.time()
+            self._atualizar_textos()
 
-    # ---- Lc0 ao vivo: chances (WDL) dos lances do Stockfish
+    # ---- Lc0 ao vivo: WDL forçado nos lances do Stockfish (searchmoves) + a opinião própria do Lc0
+    def _limpar_estado_lc0(self):
+        self._sf, self._sf_fen, self._sf_desde = None, None, None
+        self._lc0_res, self._lc0_final = {}, set()       # uci -> Opcao (com WDL); ucis calculados "a fundo"
+        self._lc0_proprio = None                          # lance preferido pelo Lc0 (busca livre)
+        self._lc0_estado = ""
+        self._lc0_ver, self._lc0_ver_vista, self._lc0_quando = 0, -1, 0.0
+        self._lc0_tok = object()                          # identifica a posição atual (tarefas velhas não gravam)
+        self._botoes = []
+
     def _quer_lc0(self):
         return App.get_running_app().cfg.get("wdl", "Lc0") == "Lc0"
 
     def _iniciar_lc0(self, b, gen):
         if not self._quer_lc0() or b.is_game_over():
             return
-        app = App.get_running_app()
-        nos = int(app.cfg.get("nos_lc0_vivo", 50000))
-        if app.lc0 is None:
-            self.l_lc0.text = "[color=999999]Lc0: iniciando…[/color]"
-
-        def tarefa():
-            m = app.obter_lc0()
-            if m is None:
-                erro = getattr(app, "lc0_erro", "")
-                Clock.schedule_once(lambda dt: setattr(
-                    self.l_lc0, "text", f"[color=ffcc66]Lc0 indisponível{': ' + erro if erro else ''}[/color]")
-                    if gen == self._gen else None)
-                return
-            if gen == self._gen:
-                m.vivo(b, 8, go=f"go nodes {nos}")
-        threading.Thread(target=tarefa, daemon=True).start()
+        self._lc0_estado = "iniciando" if App.get_running_app().lc0 is None else "calculando"
+        self._lc0_ver += 1
+        threading.Thread(target=self._trabalho_lc0, args=(b.copy(), gen, self._lc0_tok), daemon=True).start()
 
     def _parar_lc0(self):
         app = App.get_running_app()
         if getattr(app, "lc0", None):
             threading.Thread(target=app.lc0.parar, daemon=True).start()
 
-    def _lc0_linhas(self):
-        app = App.get_running_app()
-        m = getattr(app, "lc0", None)
-        if m is None or not self._quer_lc0() or self.tab.board is None:
+    def _alvos_sf(self, fen):
+        """Lances do Stockfish (até 3) para esta posição, quando a busca dele já se firmou."""
+        if not self._sf or self._sf_fen != fen:
             return None
-        if m.fen_atual() != self.tab.board.fen():
-            return None
-        ops, _ = m.linhas()
-        return [o for o in ops if o.wdl]
+        ops, prof, _, pensando = self._sf
+        if self._usa_local() and pensando and prof < 12 and time.time() - (self._sf_desde or 0) < 4:
+            return None                                   # Stockfish ainda oscilando nos primeiros lances
+        return [o.uci for o in ops[:3]]
 
-    def _resumo_lc0(self, melhor_sf=None):
+    def _trabalho_lc0(self, b, gen, tok):
+        app = App.get_running_app()
+        fen = b.fen()
+
+        def vale():
+            return gen == self._gen and tok is self._lc0_tok and self.motor_ligado and self._quer_lc0()
+
+        m = app.obter_lc0()
+        if m is None:
+            if vale():
+                erro = getattr(app, "lc0_erro", "")
+                self._lc0_estado = f"indisponível{': ' + erro if erro else ''}"
+                self._lc0_ver += 1
+            return
+        nos = int(app.cfg.get("nos_lc0_vivo", 50000))
+
+        def iniciar(go, multipv):
+            with self._lc0_trava:                         # não deixa uma tarefa velha sobrepor a nova
+                if not vale():
+                    return False
+                m.vivo(b, multipv, go=go)
+                return True
+
+        def acompanhar(final):
+            """Lê as linhas enquanto o Lc0 pensa; guarda o WDL de cada lance."""
+            while True:
+                time.sleep(0.4)
+                if not vale():
+                    return False
+                if m.fen_atual() == fen:
+                    ops, _ = m.linhas()
+                    res = dict(self._lc0_res)
+                    for o in ops:
+                        if o.wdl:
+                            res[o.uci] = o
+                    self._lc0_res = res
+                    self._lc0_ver += 1
+                if not m.pensando:
+                    if m.fen_atual() == fen:
+                        self._lc0_final |= set(final) & set(self._lc0_res)
+                    return True
+
+        # 1. opinião própria (busca livre, curta)
+        self._lc0_estado = "calculando"
+        if not iniciar(f"go nodes {max(800, nos // 20)}", 4) or not acompanhar([]):
+            return
+        if self._lc0_res:
+            self._lc0_proprio = max(self._lc0_res.values(), key=lambda o: o.expectativa).uci
+        # 2. força o Lc0 a calcular os lances do Stockfish (e o dele), mesmo que discorde
+        while vale():
+            alvo = self._alvos_sf(fen)
+            if alvo is None:
+                time.sleep(0.3)
+                continue
+            if self._lc0_proprio and self._lc0_proprio not in alvo:
+                alvo = alvo + [self._lc0_proprio]
+            faltam = [u for u in alvo if u not in self._lc0_final]
+            if not faltam:
+                self._lc0_estado = "pronto"
+                self._lc0_ver += 1
+                time.sleep(0.5)                           # espera o Stockfish mudar de ideia
+                continue
+            self._lc0_estado = "calculando"
+            self._lc0_ver += 1
+            if not iniciar(f"go nodes {nos} searchmoves {' '.join(alvo)}", len(alvo)):
+                return
+            if not acompanhar(alvo):
+                return
+            # o que o Lc0 não devolveu (ex.: roque em formato que ele não aceite): posição depois do lance
+            for u in [u for u in alvo if u not in self._lc0_final]:
+                with self._lc0_trava:
+                    if not vale():
+                        return
+                    try:
+                        wdl = F.wdl_depois(m, b, u, 1.5)
+                    except Exception:
+                        wdl = None
+                if wdl:
+                    mv = b.parse_uci(u)
+                    o = F.Opcao(u, b.san(mv), wdl=wdl)
+                    o.fonte_wdl = "Lc0"
+                    res = dict(self._lc0_res)
+                    res[u] = o
+                    self._lc0_res = res
+                self._lc0_final.add(u)                    # não tenta de novo nesta posição
+                self._lc0_ver += 1
+
+    def _resumo_lc0(self):
         """Linha abaixo da barra: o que o Lc0 acha do melhor lance do Stockfish."""
         app = App.get_running_app()
-        if not self._lc0:
+        est = self._lc0_estado
+        if est.startswith("indisponível"):
+            self.l_lc0.text = f"[color=ffcc66]Lc0 {est}[/color]"
             return
-        lc = {o.uci: o for o in self._lc0}
-        top = max(self._lc0, key=lambda o: o.expectativa)
-        pens = " ..." if app.lc0 and app.lc0.pensando else ""
+        res = {u: o for u, o in self._lc0_res.items() if u in self._lc0_final} or dict(self._lc0_res)
+        if not res:
+            self.l_lc0.text = f"[color=999999]Lc0: {est or 'calculando'}...[/color]" if est else ""
+            return
+        pens = " ..." if est in ("calculando", "iniciando") else ""
+        top = max(res.values(), key=lambda o: o.expectativa)
+        melhor_sf = self._sf[0][0] if self._sf else None
         if melhor_sf is None:
             self.l_lc0.text = f"Lc0{pens}: prefere [b]{top.san}[/b] (E {top.expectativa:.0f}%)"
-        elif melhor_sf.uci == top.uci:
-            self.l_lc0.text = f"[color=77dd77]Lc0{pens}: concorda com o Stockfish ({top.san}, E {top.expectativa:.0f}%)[/color]"
+            return
+        e_sf = res.get(melhor_sf.uci)
+        if melhor_sf.uci == top.uci:
+            self.l_lc0.text = (f"[color=77dd77]Lc0{pens}: concorda com o Stockfish "
+                               f"({top.san}, E {top.expectativa:.0f}%)[/color]")
+        elif e_sf and top.expectativa - e_sf.expectativa < 1.0:      # diferença < 1 pp: mesma coisa
+            self.l_lc0.text = (f"[color=77dd77]Lc0{pens}: {melhor_sf.san} e {top.san} equivalentes "
+                               f"(E {e_sf.expectativa:.0f}%)[/color]")
         else:
-            e_sf = lc.get(melhor_sf.uci)
-            if e_sf and top.expectativa - e_sf.expectativa < 1.0:      # diferença < 1 pp: mesma coisa
-                self.l_lc0.text = (f"[color=77dd77]Lc0{pens}: {melhor_sf.san} e {top.san} equivalentes "
-                                   f"(E {e_sf.expectativa:.0f}%)[/color]")
-                return
             extra = f"; {melhor_sf.san} tem E {e_sf.expectativa:.0f}%" if e_sf else ""
             self.l_lc0.text = (f"[color=ffcc66]Lc0{pens}: prefere [b]{top.san}[/b] "
                                f"(E {top.expectativa:.0f}%){extra}[/color]")
@@ -641,6 +769,7 @@ class TelaAnalise(Screen):
                     return
                 if ops:
                     self._sf = (ops, prof, "Lichess nuvem", False)
+                    self._sf_fen, self._sf_desde = b.fen(), time.time()
                     self._mostrar_linhas(*self._sf)
                 else:
                     self.l_info.text = msg or ""
@@ -655,34 +784,47 @@ class TelaAnalise(Screen):
         cp_b = (o1.cp if branco else -o1.cp) if o1.cp is not None else None
         self.barra.definir(F.chance_brancas(cp_b))
         self.l_info.text = f"{fonte}\nprof. {prof}{' ...' if pensando else ''}"
-        self.tab.seta = o1.uci
-        self.tab.desenhar()
-        lc = {o.uci: o for o in self._lc0}
-        usa_lc0 = self._quer_lc0() and getattr(App.get_running_app(), "lc0", None) is not None
-        self._resumo_lc0(o1)
-        self.caixa_linhas.clear_widgets()
-        for o in ops:
+        if self.tab.seta != o1.uci:
+            self.tab.seta = o1.uci
+            self.tab.desenhar()
+        if [o.uci for o, _ in self._botoes] != [o.uci for o in ops]:
+            self.caixa_linhas.clear_widgets()
+            self._botoes = []
+            for o in ops:
+                bt = Button(text="", markup=True, font_name="RobotoMono-Regular", font_size="12sp",
+                            size_hint_y=None, height=dp(46), halign="left", valign="middle",
+                            background_normal="", background_color=(0.17, 0.18, 0.21, 1))
+                bt.bind(size=lambda w, s: setattr(w, "text_size", (s[0] - dp(8), s[1])))
+                bt.bind(on_release=lambda _b, u=o.uci: self.jogar(chess.Move.from_uci(u)))
+                self.caixa_linhas.add_widget(bt)
+                self._botoes.append((o, bt))
+        else:
+            self._botoes = [(o, bt) for o, (_, bt) in zip(ops, self._botoes)]
+        self._atualizar_textos()
+
+    def _atualizar_textos(self):
+        """Só troca os textos das linhas (Stockfish + Lc0); os botões continuam os mesmos."""
+        self._resumo_lc0()
+        b = self.tab.board
+        if b is None:
+            return
+        branco = b.turn == chess.WHITE
+        usa_lc0 = self._quer_lc0()
+        res = self._lc0_res
+        for o, bt in self._botoes:
             num = f"{b.fullmove_number}." if branco else f"{b.fullmove_number}..."
             txt = f"[b]{F.texto_aval(o, branco):>6}[/b]  {num} {' '.join(o.pv[:8])}"
-            x = lc.get(o.uci)
-            if x:
+            x = res.get(o.uci)
+            if x and x.wdl:
                 w, d, l = (round(v / 10) for v in x.wdl)
+                marca = "" if o.uci in self._lc0_final else " ..."
                 txt += (f"\n[color=99ccff]        Lc0: V {w}% | Emp {d}% | D {l}% "
-                        f"-> E {x.expectativa:.0f}%[/color]")
+                        f"-> E {x.expectativa:.0f}%{marca}[/color]")
             elif usa_lc0:
-                app = App.get_running_app()
-                quieto = self._lc0 and not app.lc0.pensando
-                txt += ("\n[color=888888]        Lc0: fora dos 8 melhores dele[/color]" if quieto
-                        else "\n[color=888888]        Lc0: calculando...[/color]")
-            elif o.wdl and o is o1:
+                txt += "\n[color=888888]        Lc0: calculando...[/color]"
+            elif o.wdl:
                 txt += f"\n[color=888888]        WDL Stockfish: E {o.expectativa:.0f}%[/color]"
-            duas = "\n" in txt
-            bt = Button(text=ascii_(txt), markup=True, font_name="RobotoMono-Regular", font_size="12sp",
-                        size_hint_y=None, height=dp(46 if duas else 30), halign="left", valign="middle",
-                        background_normal="", background_color=(0.17, 0.18, 0.21, 1))
-            bt.bind(size=lambda w, s: setattr(w, "text_size", (s[0] - dp(8), s[1])))
-            bt.bind(on_release=lambda _b, u=o.uci: self.jogar(chess.Move.from_uci(u)))
-            self.caixa_linhas.add_widget(bt)
+            bt.text = ascii_(txt)
 
     def _explorador(self):
         app = App.get_running_app()
