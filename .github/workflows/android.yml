@@ -125,7 +125,7 @@ jobs:
           key: buildozer-v3-${{ hashFiles('buildozer.spec') }}
 
       - name: Testar núcleo
-        run: python hed_core.py && python hed_auto.py && python hed_plano.py && python hed_livro.py && python hed_classe.py
+        run: python hed_core.py && python hed_auto.py && python hed_plano.py && python hed_livro.py && python hed_classe.py && python hed_revisao.py
 
       - name: Testar Lichess (nuvem, sem token — não bloqueia o build)
         continue-on-error: true
@@ -196,6 +196,53 @@ jobs:
         with:
           name: hed-apk
           path: bin/*.apk
+
+  # Testes de tela (Kivy sob xvfb, Stockfish real e um Lc0 falso): rodam junto com o build.
+  testes-tela:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libegl1 libgles2 libmtdev1 libsdl2-2.0-0
+          pip install "kivy==2.3.0" chess certifi
+
+      - name: Stockfish para os testes
+        run: |
+          curl -sSL -o sf.tar https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-avx2.tar
+          tar xf sf.tar
+          echo "HED_STOCKFISH=$PWD/stockfish/stockfish-ubuntu-x86-64-avx2" >> $GITHUB_ENV
+
+      - name: Testes de núcleo
+        run: python hed_core.py && python hed_auto.py && python hed_plano.py && python hed_livro.py && python hed_classe.py && python hed_revisao.py
+
+      - name: Testes de tela
+        run: tests/rodar.sh
+
+      - name: Enviar logs dos testes (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testes-log
+          path: tests/saida
+
+  # Só publica se o APK foi gerado E os testes de tela passaram.
+  publicar:
+    needs: [build, testes-tela]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hed-apk
+          path: bin
 
       - name: Publicar APK numa Release (download direto, sem login)
         run: |

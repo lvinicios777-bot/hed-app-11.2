@@ -40,6 +40,17 @@ PESOS_ROB = {"estrutura": 0.40, "valor_opcao": 0.30, "flexibilidade": 0.30}
 FLEX = ("reversibilidade", "informacao")   # Flexibilidade = média destes dois
 PESOS_ATP = {"fo": 0.40, "fc": 0.30, "robustez": 0.20, "assimetria": 0.10}
 
+# ---- Estilos: mudam QUANTO vale o empate e o peso de cada agregado no ATP.
+# O teto (MI + extra) continua medido na pontuação objetiva E = W + D/2: nenhum estilo admite
+# um lance que perca mais que o teto — por isso "agressivo" nunca vira aposta louca.
+ESTILOS = {
+    "normal": {"nome": "Normal", "empate": 0.50, "atp": PESOS_ATP, "contempt": 0},
+    "solido": {"nome": "Sólido / defensivo", "empate": 0.60,
+               "atp": {"fo": 0.30, "fc": 0.25, "robustez": 0.35, "assimetria": 0.10}, "contempt": -100},
+    "agressivo": {"nome": "Agressivo (controlado)", "empate": 0.40,
+                  "atp": {"fo": 0.45, "fc": 0.25, "robustez": 0.15, "assimetria": 0.15}, "contempt": 150},
+}
+
 # ---- Regras objetivas (pontuação esperada, em pontos percentuais)
 K_LICHESS = 0.00368208       # curva centipeão -> probabilidade do Lichess
 MI_PP = 1.0                  # Margem de Incerteza (≈ 0,10 peão perto da igualdade)
@@ -76,14 +87,15 @@ def _phi(z: float) -> float:
     return 0.5 * (1.0 + erf(z / sqrt(2.0)))
 
 
-def sigma_diferenca(sigma_nota: float = SIGMA_NOTA) -> float:
+def sigma_diferenca(sigma_nota: float = SIGMA_NOTA, pesos_atp: Optional[Dict[str, float]] = None) -> float:
     """Desvio-padrão da diferença de ATP entre dois candidatos causado só pelo ruído das notas."""
-    pesos = [PESOS_ATP["fo"] * v for v in PESOS_FO.values()]
-    pesos.append(PESOS_ATP["fc"])
-    pesos.append(PESOS_ATP["robustez"] * PESOS_ROB["estrutura"])
-    pesos.append(PESOS_ATP["robustez"] * PESOS_ROB["valor_opcao"])
-    pesos += [PESOS_ATP["robustez"] * PESOS_ROB["flexibilidade"] / len(FLEX)] * len(FLEX)
-    pesos.append(PESOS_ATP["assimetria"])
+    pa = pesos_atp or PESOS_ATP
+    pesos = [pa["fo"] * v for v in PESOS_FO.values()]
+    pesos.append(pa["fc"])
+    pesos.append(pa["robustez"] * PESOS_ROB["estrutura"])
+    pesos.append(pa["robustez"] * PESOS_ROB["valor_opcao"])
+    pesos += [pa["robustez"] * PESOS_ROB["flexibilidade"] / len(FLEX)] * len(FLEX)
+    pesos.append(pa["assimetria"])
     return sqrt(2.0) * sigma_nota * sqrt(sum(p * p for p in pesos))
 
 
@@ -120,6 +132,7 @@ class Candidato:
     conversao: Optional[float] = None    # Eficiência de Conversão 0–10 (só pesa quando ganhando)
     analise: Dict = field(default_factory=dict)   # continuação: linha, estrutura, peças, espaço, planos
     motores: Dict = field(default_factory=dict)   # o que cada motor disse: Stockfish (cp, ranking) e Lc0 (WDL)
+    auto_orig: Dict[str, float] = field(default_factory=dict)   # nota que o app estimou (para calibrar o τ)
 
     def falhas_filtro(self) -> List[str]:
         return [k for k in FILTRO_ITENS if self.filtro.get(k) is False]
@@ -156,8 +169,18 @@ class Candidato:
 
     @property
     def atp(self) -> Optional[float]:
+        return self.atp_com(PESOS_ATP)
+
+    def atp_com(self, pesos: Dict[str, float]) -> Optional[float]:
         v = {"fo": self.fo, "fc": self.fc, "robustez": self.robustez, "assimetria": self.assimetria}
-        return None if None in v.values() else sum(p * v[k] for k, p in PESOS_ATP.items())
+        return None if None in v.values() else sum(p * v[k] for k, p in pesos.items())
+
+    def escore_estilo(self, empate: float) -> Optional[float]:
+        """Pontuação pelo estilo: E = W + empate·D (empate = 0,5 é o objetivo)."""
+        if self.w is None or self.d is None:
+            return None
+        total = (self.w or 0) + (self.d or 0) + (self.l or 0)
+        return None if total <= 0 else 100.0 * (self.w + empate * self.d) / total
 
     @property
     def media_estrategica(self) -> Optional[float]:
@@ -243,8 +266,10 @@ def _nivel_ife(conf: float) -> str:
 
 
 def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
-             mi_pp: float = MI_PP) -> Dict:
+             mi_pp: float = MI_PP, estilo: str = "normal", sigma_auto: Optional[float] = None) -> Dict:
     res: Dict = {"eliminados": [], "avisos": []}
+    est = ESTILOS.get(estilo, ESTILOS["normal"])
+    res["estilo"] = est["nome"]
 
     # 1. Filtro obrigatório (checklist do jogador)
     ativos = []
@@ -319,12 +344,21 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     # Ruído das notas: notas estimadas pelo app valem como medida menos confiável
     slots = len(admit) * len(NOTAS)
     frac_auto = sum(len([k for k in c.auto if k in NOTAS]) for c in admit) / slots
-    sigma = SIGMA_NOTA + (SIGMA_AUTO - SIGMA_NOTA) * frac_auto
-    tau = sigma_diferenca(sigma)
-    res.update(sigma=round(sigma, 2), tau=round(tau, 2), frac_auto=round(frac_auto, 2))
+    s_auto = SIGMA_AUTO if sigma_auto is None else sigma_auto
+    sigma = SIGMA_NOTA + (s_auto - SIGMA_NOTA) * frac_auto
+    tau = sigma_diferenca(sigma, est["atp"])
+    res.update(sigma=round(sigma, 2), tau=round(tau, 2), frac_auto=round(frac_auto, 2),
+               sigma_auto=round(s_auto, 2))
 
-    excesso = {c.lance: max(0.0, rel[c.lance] - mi_pp) for c in admit}
-    U = {c.lance: c.atp - LAMBDA * excesso[c.lance] for c in admit}
+    # Estilo: perda medida com o empate valendo `empate` (só entre os admitidos pelo teto objetivo)
+    rel_s = dict(rel)
+    if est["empate"] != 0.5 and modo.startswith("WDL") and all(c.escore_estilo(0.5) is not None for c in admit):
+        es = {c.lance: c.escore_estilo(est["empate"]) for c in admit}
+        topo_s = max(es.values())
+        rel_s = {k: round(topo_s - v, 2) for k, v in es.items()}
+    res["rel_estilo"] = rel_s
+    excesso = {c.lance: max(0.0, rel_s[c.lance] - mi_pp) for c in admit}
+    U = {c.lance: c.atp_com(est["atp"]) - LAMBDA * excesso[c.lance] for c in admit}
 
     # Eficiência de Conversão: em posição ganha, favorece o lance que converte com menos risco
     res["ganhando"] = e_max >= LIMIAR_GANHO
@@ -406,8 +440,9 @@ def analisar(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
 
 
 def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
-              mi_pp: float = MI_PP, tf: Optional[Dict] = None) -> str:
-    r = analisar(cands, aval_melhor_cp, mi_pp)
+              mi_pp: float = MI_PP, tf: Optional[Dict] = None, estilo: str = "normal",
+              sigma_auto: Optional[float] = None) -> str:
+    r = analisar(cands, aval_melhor_cp, mi_pp, estilo, sigma_auto)
     L = [f"HED {VERSAO} — RELATÓRIO", ""]
     n_auto = sum(1 for c in cands if c.filtro_ok and c.auto)
     if n_auto:
@@ -429,7 +464,7 @@ def relatorio(cands: List[Candidato], aval_melhor_cp: Optional[float] = None,
     if "escolha" not in r:
         return "\n".join(L)
 
-    L.append(f"Perda medida em pp de pontuação esperada, via {r['modo']}")
+    L.append(f"Estilo: {r['estilo']} | perda medida em pp de pontuação esperada, via {r['modo']}")
     L.append(f"MI {r['mi']:.1f} pp (livre) | teto {r['mi'] + r['extra']:.1f} pp | "
              f"preço {LAMBDA:.1f} ATP por pp além da MI")
     if r.get("abertura"):
@@ -548,8 +583,37 @@ def relatorio_tf(tranq_cp: float, fim_cp: float, falha_cp: float, p: Optional[fl
 RESULTADOS = {"—": None, "1": 1.0, "½": 0.5, "0": 0.0}
 
 
-def novo_registro(r: Dict, estrutura: str, jogado: str, resultado: Optional[float] = None) -> Dict:
+def ajustes_de_notas(cands: List[Candidato]) -> List[float]:
+    """Diferenças (sua nota − nota estimada pelo app) nas notas que você conferiu ou corrigiu."""
+    out = []
+    for c in cands or []:
+        for k, v0 in (c.auto_orig or {}).items():
+            v = getattr(c, k, None)
+            if k in NOTAS and v is not None and k not in c.auto:
+                out.append(round(v - v0, 2))
+    return out
+
+
+MIN_AJUSTES = 30
+
+
+def sigma_auto_medido(regs: List[Dict]) -> (Optional[float], int):
+    """Erro típico das notas automáticas, medido pelas suas correções.
+
+    Var(sua − auto) ≈ σ_auto² + σ_nota²  ⇒  σ_auto ≈ √(média(d²) − σ_nota²).
+    Só vale com ≥ 30 notas conferidas; antes disso fica o valor padrão (SIGMA_AUTO).
+    """
+    d = [x for r in regs for x in r.get("ajustes", [])]
+    if len(d) < MIN_AJUSTES:
+        return None, len(d)
+    m2 = sum(x * x for x in d) / len(d)
+    return round(min(3.0, max(0.8, sqrt(max(m2 - SIGMA_NOTA ** 2, 0.25)))), 2), len(d)
+
+
+def novo_registro(r: Dict, estrutura: str, jogado: str, resultado: Optional[float] = None,
+                  cands: Optional[List[Candidato]] = None) -> Dict:
     return {
+        "ajustes": ajustes_de_notas(cands),
         "data": date.today().isoformat(),
         "estrutura": (estrutura or "").strip() or "geral",
         "hed": r["escolha"],
@@ -573,6 +637,15 @@ def analise_registro(regs: List[Dict], minimo_rp: int = 5) -> str:
     if not regs:
         return "Registro vazio. Analise uma posição e toque em Registrar."
     L = [f"HED {VERSAO} — PR / CC / AC / RP", f"Posições registradas: {len(regs)}", ""]
+    s_auto, n_aj = sigma_auto_medido(regs)
+    L.append("CALIBRAÇÃO DO τ (notas automáticas)")
+    if s_auto is None:
+        L.append(f"  Notas conferidas por você: {n_aj}/{MIN_AJUSTES}. Até lá vale o padrão "
+                 f"σ_auto = {SIGMA_AUTO:.1f}.")
+    else:
+        L.append(f"  σ_auto medido = {s_auto:.2f} (n = {n_aj} notas conferidas; padrão era {SIGMA_AUTO:.1f}). "
+                 "Já em uso no τ.")
+    L.append("")
 
     seguiu = [r for r in regs if r["jogado"] == r["hed"]]
     com_res = [r for r in regs if r.get("resultado") is not None]
@@ -737,6 +810,27 @@ def _testes():
     # 13. Sugestões só preenchem o que falta
     c = aplicar_sugestoes(Candidato("exd5+"))
     assert c.reversibilidade == 3.0 and c.forcamento == 8.0 and c.fc is None
+    # Estilos: mesma E objetiva (55%), um com mais vitórias e outro com mais empates
+    def par():
+        return [Candidato("Ataque", 0.0, w=40, d=30, l=30, **notas()),
+                Candidato("Seguro", 0.0, w=25, d=60, l=15, **notas())]
+    assert analisar(par(), estilo="agressivo")["escolha"] == "Ataque"
+    assert analisar(par(), estilo="solido")["escolha"] == "Seguro"
+    # agressivo não admite lance além do teto objetivo, por mais vitórias que tenha
+    r = analisar([Candidato("Calmo", 0.0, w=30, d=50, l=20, **notas()),
+                  Candidato("Louco", 0.0, w=45, d=0, l=55, **notas(forcamento=10, atividade=10))],
+                 estilo="agressivo")
+    assert r["escolha"] == "Calmo" and any(l == "Louco" for l, _ in r["eliminados"]), r
+    assert analisar(par(), sigma_auto=1.5)["sigma_auto"] == 1.5
+    # Calibração do τ: correções do jogador sobre as notas automáticas
+    c = Candidato("x", 0.0, **notas(fc=7))
+    c.auto_orig = {"fc": 5.0, "estrutura": 5.0}
+    c.auto = ["estrutura"]
+    assert ajustes_de_notas([c]) == [2.0]
+    regs = [{"ajustes": [2.0, -2.0, 1.5, -1.5, 2.5, -2.5]} for _ in range(6)]
+    s_med, n = sigma_auto_medido(regs)
+    assert n == 36 and 1.5 < s_med < 2.0, s_med
+    assert sigma_auto_medido([{"ajustes": [1.0] * 5}]) == (None, 5)
     return True
 
 

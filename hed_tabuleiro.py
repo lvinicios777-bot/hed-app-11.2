@@ -444,6 +444,7 @@ class TelaAnalise(Screen):
                           (">|", lambda: self.ir_para(len(app.partida["lances"]))),
                           ("Girar", self.girar)):
             nav.add_widget(botao(txt, acao, CINZA, font_size="16sp"))
+        nav.add_widget(botao("Revisar", self.abrir_revisao, (0.45, 0.35, 0.6, 1), font_size="14sp"))
         raiz.add_widget(nav)
 
         corpo = GridLayout(cols=1, spacing=dp(3), size_hint_y=None, padding=(dp(2), 0))
@@ -563,6 +564,15 @@ class TelaAnalise(Screen):
         caixa.add_widget(l2)
         mv.add_widget(caixa)
         mv.open()
+
+    def abrir_revisao(self):
+        """Revisão da partida inteira (classes e precisão); reaproveita se já foi feita."""
+        app = App.get_running_app()
+        tela = app.sm.get_screen("revisao")
+        p, r = app.partida, app.revisao
+        app.ir("revisao")
+        if not (r and r.get("inicio") == p["inicio"] and r.get("ucis") == p["lances"]):
+            tela.iniciar(p["inicio"], p["lances"])
 
     def copiar(self):
         Clipboard.copy(self._board().fen())
@@ -704,13 +714,14 @@ class TelaAnalise(Screen):
                 self._lc0_estado = f"indisponível{': ' + erro if erro else ''}"
                 self._lc0_ver += 1
             return
-        nos = int(app.cfg.get("nos_lc0_vivo", 50000))
+        nos = int(app.cfg.get("nos_lc0_vivo") or F.NOS_LC0.get(app.cfg.get("carga_lc0", "Normal"), 50000))
+        ajustes = F.lc0_ajustes(app.cfg, b.turn)          # rating e estilo, do lado de quem joga
 
         def iniciar(go, multipv):
             with self._lc0_trava:                         # não deixa uma tarefa velha sobrepor a nova
                 if not vale():
                     return False
-                m.vivo(b, multipv, go=go)
+                m.vivo(b, multipv, go=go, antes=ajustes)
                 return True
 
         def acompanhar(final):
@@ -764,7 +775,7 @@ class TelaAnalise(Screen):
                     if not vale():
                         return
                     try:
-                        wdl = F.wdl_depois(m, b, u, 1.5)
+                        wdl = F.wdl_depois(m, b, u, 1.5, antes=ajustes)
                     except Exception:
                         wdl = None
                 if wdl:
@@ -873,6 +884,26 @@ class TelaAnalise(Screen):
         if len(hist) > 400:
             hist.pop(next(iter(hist)))
 
+    def _registrar_lc0(self, fen):
+        """Guarda o E do Lc0 (cálculos completos) desta posição, para classificar pelo Lc0."""
+        fin = {u: o.expectativa for u, o in self._lc0_res.items() if u in self._lc0_final and o.wdl}
+        if not fin:
+            return
+        hist = getattr(self, "_hist_lc0", None)
+        if hist is None:
+            hist = self._hist_lc0 = {}
+        d = hist.setdefault(fen, {"moves": {}})
+        d["moves"].update(fin)
+        ordem = sorted(d["moves"].items(), key=lambda kv: -kv[1])
+        d["best"], d["melhor_uci"] = ordem[0][1], ordem[0][0]
+        d["segundo"] = ordem[1][1] if len(ordem) > 1 else None
+        if len(hist) > 400:
+            hist.pop(next(iter(hist)))
+
+    def _pelo_lc0(self):
+        app = App.get_running_app()
+        return app.cfg.get("classificar", "Lc0") == "Lc0" and self._quer_lc0()
+
     def _livro(self, fen, uci):
         est = (self._cache_exp.get((fen, "masters")) or ({},))[0]
         if uci in est and est[uci].n >= 50:
@@ -881,8 +912,16 @@ class TelaAnalise(Screen):
         return uci in est and est[uci].n >= 1000
 
     def _classe_lance(self, antes, m, depois=None):
-        """Classe do lance m jogado na posição `antes` (None se ainda faltar avaliação)."""
-        hist = getattr(self, "_hist", {})
+        """Classe do lance m jogado na posição `antes` (None se ainda faltar avaliação).
+
+        Pela fonte escolhida em Configurações (Lc0 ou Stockfish); sem dados do Lc0, usa o Stockfish."""
+        if self._pelo_lc0():
+            k = self._classe_com(getattr(self, "_hist_lc0", {}), antes, m, depois)
+            if k:
+                return k
+        return self._classe_com(getattr(self, "_hist", {}), antes, m, depois)
+
+    def _classe_com(self, hist, antes, m, depois=None):
         d = hist.get(antes.fen())
         if not d:
             return None
@@ -900,10 +939,18 @@ class TelaAnalise(Screen):
                               board=antes, move=m, livro=livro)
 
     def _selo_ultimo(self):
-        p = App.get_running_app().partida
+        app = App.get_running_app()
+        p = app.partida
         if p["idx"] <= 0:
             self.tab.selo = None
             return
+        r = getattr(app, "revisao", None)
+        if (r and r.get("inicio") == p["inicio"] and r.get("ucis", [])[: p["idx"]] == p["lances"][: p["idx"]]
+                and len(r.get("lances", [])) >= p["idx"]):
+            x = r["lances"][p["idx"] - 1]                 # partida revisada: usa a classe da revisão
+            if x.get("classe"):
+                self.tab.selo = (chess.Move.from_uci(x["uci"]).to_square, x["classe"])
+                return
         antes = chess.Board(p["inicio"])
         for u in p["lances"][: p["idx"] - 1]:
             antes.push_uci(u)
@@ -919,6 +966,12 @@ class TelaAnalise(Screen):
         b = self.tab.board
         if b is None:
             return
+        self._registrar_lc0(b.fen())
+        if self._pelo_lc0():
+            antes = self.tab.selo
+            self._selo_ultimo()
+            if self.tab.selo != antes:
+                self.tab.desenhar()
         branco = b.turn == chess.WHITE
         usa_lc0 = self._quer_lc0()
         res = self._lc0_res

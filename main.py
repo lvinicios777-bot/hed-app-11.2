@@ -26,8 +26,10 @@ from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 
 from hed_core import (Candidato, ESTRATEGICOS, DIRETOS, ROTULOS, MI_PP, VERSAO, FILTRO_ITENS, FILTRO_ROTULOS,
-                      RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro)
+                      RESULTADOS, analisar, relatorio, relatorio_tf, novo_registro, analise_registro,
+                      sigma_auto_medido, ESTILOS)
 import hed_classe as KC
+import hed_revisao as RV
 import hed_fontes as F
 import hed_auto as A
 import hed_livro as LV
@@ -406,7 +408,7 @@ class TelaRegistrar(Screen):
         app = App.get_running_app()
         app.ultima_estrutura = self.estrutura.text.strip()
         reg = novo_registro(app.ultimo, self.estrutura.text, self.jogado.text,
-                            RESULTADOS[self.resultado.text])
+                            RESULTADOS[self.resultado.text], app.cands)
         if app.fen:
             reg["fen"] = app.fen
         if self.tf_ok is not None and self.tf_ok.text != "—":
@@ -609,6 +611,8 @@ class TelaPosicao(Screen):
 
 
 # ---------------------------------------------------------------- Resumo (tela principal do resultado)
+FORCA = {"normal": "Normal (força do Lc0)", "meu": "Meu rating", "digitar": "Digitar"}
+
 # cores no padrão do chess.com: verde = melhor, amarelo = imprecisão, laranja = duvidoso, vermelho = capivarada
 CONFIANCA = {"A+": ("Escolha clara", "melhor"), "A": ("Escolha clara", "melhor"),
              "B": ("Escolha boa", "bom"), "C": ("Escolha apertada", "imprecisao"),
@@ -660,6 +664,11 @@ class TelaResumo(Screen):
             mot = self._motores()
             if mot:
                 corpo.add_widget(texto_quebrado(mot, "14sp"))
+            elo = F.elo_wdl(app.cfg)
+            corpo.add_widget(texto_quebrado(
+                f"[color=aaaaaa]Estilo {r.get('estilo', 'Normal')} · WDL "
+                f"{'calibrado para Elo ' + str(elo) if elo else 'do próprio Lc0'} · classes por "
+                f"{app.cfg.get('classificar', 'Lc0')}[/color]", "12sp"))
             corpo.add_widget(texto_quebrado(seguro(self._porque(r))))
             corpo.add_widget(Label(text="[b]Os lances analisados[/b]", markup=True, size_hint_y=None,
                                    height=dp(30)))
@@ -740,7 +749,14 @@ class TelaResumo(Screen):
         """Classe chess.com de cada candidato, com o mesmo E da decisão do HED (WDL do Lc0 quando houver)."""
         import chess
         app = App.get_running_app()
-        E = {k: v for k, v in (r.get("E") or {}).items() if v is not None}
+        if app.cfg.get("classificar", "Lc0") == "Stockfish":
+            E = {}
+            for c in app.cands:
+                cp = (c.motores or {}).get("sf_cp", c.aval_cp)
+                if cp is not None:
+                    E[c.lance] = KC.e_de_cp(cp)
+        else:
+            E = {k: v for k, v in (r.get("E") or {}).items() if v is not None}
         if not E:
             return {}
         ordem = sorted(E.values(), reverse=True)
@@ -1048,6 +1064,39 @@ class TelaConfig(Screen):
         if app.lc0_erro:
             corpo.add_widget(rotulo(f"Último erro do Lc0: {app.lc0_erro}", font_size="12sp"))
         corpo.add_widget(botao("Trocar a rede do Lc0 (opcional, .pb.gz)", self.escolher_rede, AZUL))
+
+        corpo.add_widget(Label(text="[b]Força e estilo do Lc0[/b]", markup=True, size_hint_y=None, height=dp(36)))
+        corpo.add_widget(rotulo("Força do WDL (chances de vitória/empate/derrota):"))
+        self.forca = Spinner(text=FORCA[c.get("forca_wdl", "normal")], values=list(FORCA.values()),
+                             size_hint_y=None, height=ALTURA)
+        corpo.add_widget(self.forca)
+        linha = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+        linha.add_widget(rotulo("Meu rating:"))
+        self.meu_rating = campo(str(c.get("meu_rating", 2075)), filtro="int")
+        linha.add_widget(self.meu_rating)
+        linha.add_widget(rotulo("Digitado:"))
+        self.elo_digitado = campo(str(c.get("elo_digitado", 2000)), filtro="int")
+        linha.add_widget(self.elo_digitado)
+        corpo.add_widget(linha)
+        corpo.add_widget(texto_quebrado("Normal = chances do próprio Lc0 (muito empate). Com um rating, as chances "
+                                "ficam as de jogadores desse nível em ritmo rápido. O rating do Lichess "
+                                "costuma ser maior que o FIDE.", "12sp"))
+        corpo.add_widget(rotulo("Estilo:"))
+        self.estilo = Spinner(text=ESTILOS[c.get("estilo", "normal")]["nome"],
+                              values=[e["nome"] for e in ESTILOS.values()], size_hint_y=None, height=ALTURA)
+        corpo.add_widget(self.estilo)
+        corpo.add_widget(texto_quebrado("Normal = o do Lc0. Sólido valoriza o empate e a estrutura. Agressivo joga "
+                                "para ganhar e valoriza iniciativa, mas nunca aceita lance acima do teto de "
+                                "perda (sem aposta louca).", "12sp"))
+        corpo.add_widget(rotulo("Classificar os lances (★ ✓ ?! ? ??) por:"))
+        self.classificar = Spinner(text=c.get("classificar", "Lc0"), values=["Lc0", "Stockfish"],
+                                   size_hint_y=None, height=ALTURA)
+        corpo.add_widget(self.classificar)
+        corpo.add_widget(rotulo("Lc0 ao vivo (tabuleiro):"))
+        self.carga = Spinner(text=c.get("carga_lc0", "Normal"), values=list(F.NOS_LC0),
+                             size_hint_y=None, height=ALTURA)
+        corpo.add_widget(self.carga)
+        corpo.add_widget(texto_quebrado("Rápido esquenta menos o celular; Profundo é mais preciso.", "12sp"))
         corpo.add_widget(botao("Testar Lc0", self.testar_lc0, AZUL))
 
         corpo.add_widget(Label(text="[b]Livro de aberturas (EPUB, ex.: FCO)[/b]", markup=True,
@@ -1096,7 +1145,7 @@ class TelaConfig(Screen):
 
         def trabalho():
             app.fechar_lc0()
-            txt = F.diagnostico_lc0(app.rede_lc0())
+            txt = F.diagnostico_lc0(app.rede_lc0(), app.cfg)
             Clock.schedule_once(lambda dt: tela.mostrar(txt, [("Voltar", lambda: app.ir("config"), CINZA)]))
         threading.Thread(target=trabalho, daemon=True).start()
 
@@ -1141,9 +1190,179 @@ class TelaConfig(Screen):
         app.cfg.update(wdl=self.fonte_wdl.text, token=self.token.text.strip(), motor=self.motor.text,
                        ratings=self.ratings.text.strip() or F.CFG_PADRAO["ratings"],
                        speeds=self.speeds.text.strip() or F.CFG_PADRAO["speeds"],
+                       forca_wdl={v: k for k, v in FORCA.items()}[self.forca.text],
+                       meu_rating=int(num(self.meu_rating.text, 2075)),
+                       elo_digitado=int(num(self.elo_digitado.text, 2000)),
+                       estilo={e["nome"]: k for k, e in ESTILOS.items()}[self.estilo.text],
+                       classificar=self.classificar.text, carga_lc0=self.carga.text,
                        **{k: int(s.value) for k, s in self.sl.items()})
         app.salvar()
         app.ir("lista")
+
+
+# ---------------------------------------------------------------- Revisão da partida
+ORDEM_CLASSES = ["brilhante", "otimo", "melhor", "excelente", "bom", "livro", "imprecisao", "erro", "perdeu",
+                 "capivarada"]
+
+
+def simbolo(chave):
+    if not chave:
+        return "  "
+    nome, simb, cor = KC.CLASSES[chave]
+    return f"[font=DejaVuSans][b][color={cor}]{simb}[/color][/b][/font]"
+
+
+class TelaRevisao(Screen):
+    def on_enter(self, *_):
+        if not getattr(self, "montada", False):
+            self.montar()
+
+    def montar(self):
+        app = App.get_running_app()
+        self.montada, self.cancelar = True, False
+        self.clear_widgets()
+        raiz = BoxLayout(orientation="vertical", padding=dp(8), spacing=dp(6))
+        raiz.add_widget(titulo("Revisão da partida"))
+        self.status = texto_quebrado("", "13sp")
+        raiz.add_widget(self.status)
+        self.corpo = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
+        self.corpo.bind(minimum_height=self.corpo.setter("height"))
+        sv = ScrollView()
+        sv.add_widget(self.corpo)
+        raiz.add_widget(sv)
+        acoes = BoxLayout(size_hint_y=None, height=ALTURA, spacing=dp(6))
+        acoes.add_widget(botao("Voltar", self.voltar, CINZA))
+        acoes.add_widget(botao("Colar PGN", self.colar, AZUL))
+        acoes.add_widget(botao("Revisar tabuleiro", lambda: self.iniciar(app.partida["inicio"],
+                                                                          app.partida["lances"]), VERDE))
+        raiz.add_widget(acoes)
+        self.add_widget(raiz)
+        if app.revisao:
+            self.mostrar(app.revisao)
+        else:
+            self.status.text = ("Revisa a partida do tabuleiro de análise (ou um PGN colado): classe de cada "
+                                "lance e precisão de cada lado.")
+
+    def voltar(self):
+        self.cancelar = True
+        App.get_running_app().ir("analise")
+
+    def colar(self):
+        from kivy.core.clipboard import Clipboard
+        try:
+            inicio, lances = F.ler_partida(Clipboard.paste() or "")
+        except Exception as e:
+            self.status.text = f"Não consegui ler o PGN: {e}"
+            return
+        self.iniciar(inicio, lances)
+
+    def iniciar(self, inicio, lances):
+        app = App.get_running_app()
+        if not getattr(self, "montada", False):
+            self.montar()
+        if not lances:
+            self.status.text = "Não há lances para revisar (jogue ou cole uma partida)."
+            return
+        self.cancelar = False
+        self.corpo.clear_widgets()
+        self.status.text = "Preparando os motores…"
+        cfg = dict(app.cfg)
+
+        def progresso(i, n):
+            Clock.schedule_once(lambda dt: setattr(self.status, "text", f"Stockfish: posição {i}/{n}…"))
+
+        def trabalho():
+            try:
+                motor = app.obter_motor() if cfg.get("motor") == "Stockfish local" else None
+                nuvem = None if motor else F.nuvem
+                lc0 = None
+                if cfg.get("classificar", "Lc0") == "Lc0" and cfg.get("wdl", "Lc0") == "Lc0":
+                    lc0 = app.obter_lc0()
+                token = cfg.get("token", "").strip()
+
+                def livro(b, u):
+                    est, _, _ = F.banco(b, "masters", token, cfg)
+                    return u in est and est[u].n >= 50
+                if lc0 is not None:
+                    Clock.schedule_once(lambda dt: setattr(self.status, "text",
+                                                           "Stockfish e depois Lc0 (lance a lance)…"))
+                r = RV.revisar(inicio, lances, motor=motor, nuvem=nuvem, lc0=lc0,
+                               ajustes_lc0=lambda cor: F.lc0_ajustes(cfg, cor),
+                               tempo=min(1.0, max(0.3, float(cfg.get("tempo", 4)) / 8)),
+                               nos_lc0=max(1500, F.NOS_LC0.get(cfg.get("carga_lc0", "Normal"), 50000) // 15),
+                               livro=livro if token else None, progresso=progresso,
+                               cancelado=lambda: self.cancelar)
+                if r.get("cancelado"):
+                    return
+                app.revisao = r
+
+                def fim(dt):
+                    self.mostrar(r)
+                    app.salvar()
+                Clock.schedule_once(fim)
+            except Exception as e:
+                msg = f"Não consegui revisar: {type(e).__name__}: {e}"
+                Clock.schedule_once(lambda dt: setattr(self.status, "text", msg))
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def mostrar(self, r):
+        if not getattr(self, "montada", False):
+            self.montar()
+        self.corpo.clear_widgets()
+        fontes = {x["fonte"] for x in r["lances"]}
+        self.status.text = (f"{len(r['lances'])} lances · classes por {' e '.join(sorted(fontes))}. "
+                            "Toque num lance para vê-lo no tabuleiro.")
+        pr = r["precisao"]
+        cab = GridLayout(cols=3, size_hint_y=None, spacing=dp(2))
+        cab.bind(minimum_height=cab.setter("height"))
+
+        def cel(t, negrito=False, alinhar="center"):
+            lb = Label(text=f"[b]{t}[/b]" if negrito else t, markup=True, size_hint_y=None, height=dp(28),
+                       halign=alinhar, valign="middle", font_size="14sp")
+            lb.bind(size=lambda w, s: setattr(w, "text_size", s))
+            return lb
+        for t in ("", "Brancas", "Pretas"):
+            cab.add_widget(cel(t, True))
+        cab.add_widget(cel("Precisão", True, "left"))
+        for lado in ("brancas", "pretas"):
+            v = pr.get(lado)
+            cab.add_widget(cel("—" if v is None else f"[b]{v:.1f}%[/b]"))
+        for k in ORDEM_CLASSES:
+            a, b_ = r["contagem"]["brancas"][k], r["contagem"]["pretas"][k]
+            if not a and not b_:
+                continue
+            cab.add_widget(cel(f"{simbolo(k)} {KC.CLASSES[k][0]}", alinhar="left"))
+            cab.add_widget(cel(str(a)))
+            cab.add_widget(cel(str(b_)))
+        self.corpo.add_widget(cab)
+        self.corpo.add_widget(Label(text="[b]Lances[/b]", markup=True, size_hint_y=None, height=dp(30)))
+        por_num = {}
+        for x in r["lances"]:
+            por_num.setdefault(x["num"], [None, None])[0 if x["cor"] == "brancas" else 1] = x
+        for num, (w, bk) in sorted(por_num.items()):
+            linha = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(4))
+            linha.add_widget(Label(text=f"{num}.", size_hint_x=0.14, font_size="14sp"))
+            for x in (w, bk):
+                if x is None:
+                    linha.add_widget(Label(text="", size_hint_x=0.43))
+                    continue
+                dica = ""
+                if x["classe"] in ("imprecisao", "erro", "capivarada", "perdeu") and x["melhor"]:
+                    dica = f" [size=11sp][color=aaaaaa](melhor {x['melhor']})[/color][/size]"
+                bt = Button(text=f"{simbolo(x['classe'])} {x['san']}{dica}", markup=True, size_hint_x=0.43,
+                            font_size="14sp", background_normal="", background_color=(0.17, 0.18, 0.21, 1),
+                            halign="left", valign="middle")
+                bt.bind(size=lambda w_, s_: setattr(w_, "text_size", (s_[0] - dp(8), s_[1])))
+                bt.bind(on_release=lambda _b, ply=x["ply"]: self.ver(ply))
+                linha.add_widget(bt)
+            self.corpo.add_widget(linha)
+
+    def ver(self, ply):
+        app = App.get_running_app()
+        r = app.revisao
+        app.partida = {"inicio": r["inicio"], "lances": list(r["ucis"]), "idx": ply}
+        app.salvar()
+        app.ir("analise")
 
 
 # ---------------------------------------------------------------- App
@@ -1165,13 +1384,14 @@ class HEDApp(App):
         self.motor, self._trava_motor = None, threading.Lock()
         self.motor_erro = ""
         self.lc0, self.lc0_erro, self._trava_lc0 = None, "", threading.Lock()
+        self.revisao = None
         self.carregar()
         self.sm = ScreenManager(transition=NoTransition())
         for nome, cls in (("lista", TelaLista), ("edicao", TelaEdicao), ("texto", TelaTexto),
                           ("registrar", TelaRegistrar), ("registro", TelaRegistro),
                           ("posicao", TelaPosicao), ("config", TelaConfig), ("analise", TelaAnalise),
                           ("tf", TelaTF), ("planos", TelaPlanos), ("resumo", TelaResumo),
-                          ("plano", TelaPlano)):
+                          ("plano", TelaPlano), ("revisao", TelaRevisao)):
             self.sm.add_widget(cls(name=nome))
         self.sm.current = "lista"
         return self.sm
@@ -1254,6 +1474,7 @@ class HEDApp(App):
             self.cfg.update(dados.get("cfg", {}))
             self.fen = dados.get("fen", "")
             self.partida = dados.get("partida", self.partida)
+            self.revisao = dados.get("revisao")
         except (OSError, ValueError, TypeError):
             pass
 
@@ -1263,7 +1484,7 @@ class HEDApp(App):
                 json.dump({"aval_melhor": self.aval_melhor, "mi_pp": self.mi_pp, "tf": self.tf, "tf_ultimo": self.tf_ultimo, "partida_backup": self.partida_backup,
                            "cands": [c.para_dict() for c in self.cands],
                            "registro": self.registro, "ultima_estrutura": self.ultima_estrutura,
-                           "cfg": self.cfg, "fen": self.fen, "partida": self.partida},
+                           "cfg": self.cfg, "fen": self.fen, "partida": self.partida, "revisao": self.revisao},
                           f, ensure_ascii=False)
         except OSError:
             pass
@@ -1278,10 +1499,14 @@ class HEDApp(App):
         self.sm.get_screen("edicao").carregar(c)
         self.ir("edicao")
 
+    def parametros_hed(self):
+        """Estilo escolhido e σ das notas automáticas medido pelos seus registros (quando já há 30+)."""
+        return {"estilo": self.cfg.get("estilo", "normal"), "sigma_auto": sigma_auto_medido(self.registro)[0]}
+
     def mostrar_relatorio(self):
         """Resultado da análise: primeiro o Resumo (claro e curto); os números ficam em Detalhes."""
         aval = None if self.aval_melhor is None else self.aval_melhor * 100
-        r = analisar(self.cands, aval, self.mi_pp)
+        r = analisar(self.cands, aval, self.mi_pp, **self.parametros_hed())
         self.ultimo = r if "escolha" in r else None
         self.sm.get_screen("resumo").mostrar(r)
         self.ir("resumo")
@@ -1292,14 +1517,14 @@ class HEDApp(App):
 
     def mostrar_detalhes(self):
         aval = None if self.aval_melhor is None else self.aval_melhor * 100
-        r = analisar(self.cands, aval, self.mi_pp)
+        r = analisar(self.cands, aval, self.mi_pp, **self.parametros_hed())
         self.ultimo = r if "escolha" in r else None
         botoes = [("Voltar", lambda: self.ir("resumo"), CINZA)]
         if any(c.analise for c in self.cands):
             botoes.append(("Planos", self.mostrar_planos, AZUL))
         if self.ultimo:
             botoes.append(("Registrar", self.abrir_registrar, VERDE))
-        self.sm.get_screen("texto").mostrar(relatorio(self.cands, aval, self.mi_pp, self.tf_ultimo), botoes)
+        self.sm.get_screen("texto").mostrar(relatorio(self.cands, aval, self.mi_pp, self.tf_ultimo, **self.parametros_hed()), botoes)
         self.ir("texto")
 
     def mostrar_planos(self):

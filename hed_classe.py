@@ -42,35 +42,64 @@ def e_de_cp(cp: Optional[float]) -> Optional[float]:
     return 50 + 50 * (2 / (1 + math.exp(-0.00368208 * cp)) - 1)
 
 
-def _en_prise(b: chess.Board, casa: int) -> bool:
-    """A peça em `casa` pode ser capturada com ganho pelo lado que joga em `b`."""
+def see(b: chess.Board, casa: int) -> int:
+    """Troca estática na casa: quanto o lado que joga ganha capturando ali (0 se não compensa).
+
+    Usa só capturas LEGAIS (respeita cravadas) e sempre o atacante mais barato, alternando os lados;
+    cada lado pode parar quando quiser (negamax da sequência).
+    """
+    alvo = b.piece_at(casa)
+    if alvo is None:
+        return 0
+    x = b.copy(stack=False)
+    ganhos, val = [], VALOR[alvo.piece_type]
+    for _ in range(32):
+        caps = [m for m in x.legal_moves if m.to_square == casa]
+        if not caps:
+            break
+        m = min(caps, key=lambda m: VALOR[x.piece_at(m.from_square).piece_type] or 100)
+        ganhos.append(val)
+        p = x.piece_at(m.from_square)
+        val = VALOR[m.promotion] if m.promotion else (VALOR[p.piece_type] or 100)
+        x.push(m)
+    v = 0
+    for g in reversed(ganhos):
+        v = max(0, g - v)
+    return v
+
+
+def _pendurada(b: chess.Board, casa: int) -> int:
+    """Material que o lado que joga em `b` ganha pegando a peça em `casa` (troca completa)."""
     p = b.piece_at(casa)
-    if p is None or p.piece_type == chess.KING:
-        return False
-    atac = [s for s in b.attackers(b.turn, casa) if b.piece_at(s)]
-    if not atac:
-        return False
-    if not b.attackers(p.color, casa):
-        return True
-    return min(VALOR[b.piece_at(s).piece_type] for s in atac) < VALOR[p.piece_type]
+    if p is None or p.piece_type == chess.KING or p.color == b.turn:
+        return 0
+    try:
+        return see(b, casa)
+    except Exception:
+        return 0
 
 
 def sacrificio(b: chess.Board, m: chess.Move) -> bool:
-    """O lance deixa (de novo) uma peça de valor ≥ 3 capturável com ganho, sem ser uma troca."""
+    """O lance entrega (de novo) material ≥ 2 numa peça de valor ≥ 3, contando a troca inteira."""
     cor = b.turn
-    antes = {s for s, p in b.piece_map().items() if p.color == cor and VALOR[p.piece_type] >= 3}
-    ja = {s for s in antes if _en_prise(_vez(b, not cor), s)}
     capt = b.piece_at(m.to_square)
     ganho = VALOR[capt.piece_type] if capt else (1 if b.is_en_passant(m) else 0)
+    try:
+        antes = _vez(b, not cor)
+        ja = {s for s, p in b.piece_map().items()
+              if p.color == cor and VALOR[p.piece_type] >= 3 and _pendurada(antes, s) > 0}
+    except Exception:
+        ja = set()
     b2 = b.copy()
     b2.push(m)
     for s, p in b2.piece_map().items():
         if p.color != cor or VALOR[p.piece_type] < 3:
             continue
         origem = m.from_square if s == m.to_square else s
-        if origem in ja:
+        if origem in ja and s != m.to_square:
             continue                                   # já estava pendurada antes: não é sacrifício novo
-        if _en_prise(b2, s) and VALOR[p.piece_type] - ganho >= 2:
+        perda = _pendurada(b2, s) - (ganho if s == m.to_square else 0)
+        if perda >= 2:
             return True
     return False
 
@@ -126,6 +155,12 @@ def _testes():
     b = chess.Board("r1bq1rk1/pppn1ppp/4p3/3pP3/1b1P4/2NB1N2/PPP2PPP/R1BQK2R w KQ - 0 8")
     assert sacrificio(b, b.parse_san("Bxh7+"))
     assert not sacrificio(b, b.parse_san("O-O"))
+    # sacrifício de qualidade: torre por cavalo defendido por peão
+    b = chess.Board("4k3/8/8/2p5/1n6/8/8/1R2K3 w - - 0 1")
+    assert sacrificio(b, b.parse_san("Rxb4")) is True
+    # atacante cravado não conta: o cavalo "pendurado" está protegido pela cravada
+    b = chess.Board("4k3/4r3/8/8/8/2n5/4N3/4K3 w - - 0 1")
+    assert _pendurada(chess.Board("4k3/4r3/8/3b4/8/8/4N3/4K3 b - - 0 1"), chess.E2) == 0
     # troca simples não é sacrifício
     b = chess.Board("rnbqkbnr/ppp2ppp/8/3pp3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 0 3")
     assert not sacrificio(b, b.parse_san("exd5"))

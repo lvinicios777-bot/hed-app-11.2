@@ -71,6 +71,19 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.17 — força, estilos, revisão e calibração
+- **Força do WDL** (Configurações): Normal (o WDL do próprio Lc0), Meu rating ou Digitar. Usa `WDLCalibrationElo` do Lc0: as chances viram as de jogadores desse Elo (ritmo rápido).
+- **Estilos**: Normal (o do Lc0), Sólido/defensivo, Agressivo (controlado).
+  - No Lc0: `Contempt` (−100 sólido, +150 agressivo) com `ContemptMode` do lado de quem joga.
+  - No HED: o empate vale 0,6 (sólido), 0,5 (normal) ou 0,4 (agressivo) e os pesos do ATP mudam (sólido: mais Robustez; agressivo: mais FO e Assimetria).
+  - O teto de perda continua medido na pontuação objetiva E = V + Emp/2: nenhum estilo admite lance acima de MI + extra.
+- **Classificar por** Lc0 ou Stockfish, aplicado igual no Resumo, na análise ao vivo e na revisão.
+- **Lc0 ao vivo**: Rápido (10 mil nós) / Normal (50 mil) / Profundo (200 mil).
+- **Revisão de partida** (botão Revisar no tabuleiro, ou PGN colado): classe de cada lance, contagem por classe e precisão de cada lado (fórmula do Lichess: 103,1668·e^(−0,04354·perda) − 3,1669; partida = média da aritmética com a harmônica). Tocar num lance abre o tabuleiro com o selo; navegando na partida revisada, todos os lances mostram o selo.
+- **Calibração do τ**: o app guarda a nota que ele estimou; quando você confere ou corrige, a diferença entra no registro. Com 30+ notas, σ_auto = √(média(d²) − σ_nota²) substitui o padrão 2,0 no τ.
+- **Brilhante** com troca estática completa (só capturas legais: respeita cravadas).
+- **Testes de tela no build** (`tests/rodar.sh`): o APK só é publicado se o build e os testes passarem.
+
 ## Novidades da 11.1.2.16 — classificação no estilo do chess.com
 - Classes e cores do chess.com, com os limiares oficiais de perda de pontos esperados: ★ Melhor (≤ 0) · ✓ Excelente (≤ 0,02) · ✓ Bom (≤ 0,05) · ?! Imprecisão (≤ 0,10, amarelo) · ? Erro (≤ 0,20, laranja) · ?? Capivarada (> 0,20, vermelho); especiais: !! Brilhante (sacrifício bom), ! Ótimo (único lance bom), ≡ Teoria (livro), ✗ Perdeu a chance (`hed_classe.py`).
 - Resumo: cada lance mostra a classe (com o mesmo E da decisão do HED) e, embaixo, o papel no HED. A caixa de confiança segue as cores: verde = escolha clara, amarelo = apertada, azul = empate técnico (tanto faz), laranja = duvidoso.

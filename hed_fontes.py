@@ -32,7 +32,42 @@ CFG_PADRAO = {
     "speeds": "blitz,rapid,classical",
     "extras": 3,                     # lances do banco avaliados além do MultiPV
     "prof_vivo": 24,                 # profundidade da análise ao vivo no tabuleiro
+    "forca_wdl": "normal",           # normal (força do Lc0) | meu (meu rating) | digitar
+    "meu_rating": 2075,
+    "elo_digitado": 2000,
+    "estilo": "normal",              # normal | solido | agressivo
+    "classificar": "Lc0",            # fonte da classificação dos lances: Lc0 | Stockfish
+    "carga_lc0": "Normal",           # Rápido | Normal | Profundo (nós do Lc0 ao vivo)
 }
+
+NOS_LC0 = {"Rápido": 10000, "Normal": 50000, "Profundo": 200000}
+
+
+def elo_wdl(cfg: Dict) -> int:
+    """Elo usado para calibrar o WDL do Lc0 (0 = sem calibração, a força do próprio Lc0)."""
+    modo = cfg.get("forca_wdl", "normal")
+    try:
+        if modo == "meu":
+            return int(float(cfg.get("meu_rating", 0)))
+        if modo == "digitar":
+            return int(float(cfg.get("elo_digitado", 0)))
+    except (TypeError, ValueError):
+        return 0
+    return 0
+
+
+def lc0_ajustes(cfg: Dict, cor: bool) -> List[str]:
+    """Comandos UCI de calibração e estilo para o Lc0, do ponto de vista de `cor` (quem vai jogar).
+
+    WDLCalibrationElo: WDL como o de jogadores desse Elo (ritmo rápido); 0 = WDL do próprio Lc0.
+    Contempt + ContemptMode: o estilo (agressivo = joga para ganhar; sólido = aceita a igualdade).
+    """
+    from hed_core import ESTILOS
+    cont = ESTILOS.get(cfg.get("estilo", "normal"), ESTILOS["normal"])["contempt"]
+    modo = "disable" if not cont else ("white_side_analysis" if cor == chess.WHITE else "black_side_analysis")
+    return [f"setoption name WDLCalibrationElo value {elo_wdl(cfg)}",
+            f"setoption name ContemptMode value {modo}",
+            f"setoption name Contempt value {cont}"]
 
 
 class FonteErro(Exception):
@@ -288,7 +323,7 @@ def caminho_lc0() -> Optional[str]:
     return None
 
 
-def diagnostico_lc0(rede: Optional[str]) -> str:
+def diagnostico_lc0(rede: Optional[str], cfg: Optional[Dict] = None) -> str:
     """Inicia o Lc0 com a rede escolhida e calcula 1 posição: confirma que motor e rede funcionam."""
     import threading
     import time
@@ -308,8 +343,10 @@ def diagnostico_lc0(rede: Optional[str]) -> str:
                 linhas.append(x.strip())
         threading.Thread(target=ler, daemon=True).start()
         ini = time.time()
+        cfg = {**CFG_PADRAO, **(cfg or {})}
+        ajustes = lc0_ajustes(cfg, chess.WHITE)
         for cmd in ("uci", f"setoption name WeightsFile value {rede}", "setoption name UCI_ShowWDL value true",
-                    "isready", "position startpos", "go nodes 40"):
+                    *ajustes, "isready", "position startpos", "go nodes 40"):
             p.stdin.write(cmd + "\n")
             p.stdin.flush()
         while time.time() - ini < 90 and not any(x.startswith("bestmove") for x in linhas):
@@ -323,6 +360,14 @@ def diagnostico_lc0(rede: Optional[str]) -> str:
             t = wdl[-1].split()
             i = t.index("wdl")
             L.append(f"WDL da posição inicial: {t[i + 1]}/{t[i + 2]}/{t[i + 3]} (‰)")
+        opcs = {" ".join(x.split()[2:x.split().index("type")]) for x in linhas
+                if x.startswith("option name") and " type " in x}
+        from hed_core import ESTILOS
+        elo = elo_wdl(cfg)
+        L.append(f"Calibração do WDL: {'Elo ' + str(elo) if elo else 'normal (força do Lc0)'} — "
+                 f"{'suportada' if 'WDLCalibrationElo' in opcs else 'NÃO suportada por este Lc0'}")
+        L.append(f"Estilo: {ESTILOS.get(cfg['estilo'], ESTILOS['normal'])['nome']} — "
+                 f"{'suportado' if 'Contempt' in opcs and 'ContemptMode' in opcs else 'NÃO suportado (vale só no HED)'}")
         erros = [x for x in linhas if "rror" in x or "xception" in x]
         if erros:
             L.append("Mensagens: " + " | ".join(erros[:3]))
@@ -431,6 +476,8 @@ class MotorVivo:
         self._fim.set()
         self._info: Dict[int, dict] = {}
         self._board: Optional[chess.Board] = None
+        self.suportadas = set()                 # opções que o motor anunciou em "uci"
+        self._ajustes: List[str] = []           # últimos setoption enviados (evita repetir)
         self.ativo = True
         threading.Thread(target=self._ler, daemon=True).start()
         self._env("uci")
@@ -473,6 +520,8 @@ class MotorVivo:
                 self._pronto_ev.set()
             elif t[0] == "uciok":
                 self._uciok.set()
+            elif t[0] == "option" and "name" in t and "type" in t:
+                self.suportadas.add(" ".join(t[t.index("name") + 1:t.index("type")]))
             elif t[0] == "id" and len(t) > 2 and t[1] == "name":
                 self.nome = " ".join(t[2:])
         self.ativo = False
@@ -488,11 +537,16 @@ class MotorVivo:
             self._env("stop")
             self._fim.wait(5)
 
-    def _iniciar(self, board: chess.Board, multipv: int, go: str):
+    def _iniciar(self, board: chess.Board, multipv: int, go: str, antes: Optional[List[str]] = None):
         self._parar()
         with self._dados:
             self._info = {}
             self._board = board.copy()
+        cmds = [c for c in (antes or []) if self.aceita(c)]
+        if cmds and cmds != self._ajustes:
+            for c in cmds:
+                self._env(c)
+            self._ajustes = cmds
         self._env(f"setoption name MultiPV value {multipv}")
         self._env(f"position fen {board.fen()}")
         self._sincronizar()
@@ -500,13 +554,22 @@ class MotorVivo:
         self._env(go)
 
     # ---- uso
-    def vivo(self, board: chess.Board, multipv: int = 3, profundidade: int = 24, go: Optional[str] = None):
+    def aceita(self, cmd: str) -> bool:
+        """True se o setoption é de uma opção que o motor conhece."""
+        if not cmd.startswith("setoption name "):
+            return True
+        resto = cmd[len("setoption name "):]
+        nome = resto.split(" value ")[0]
+        return nome in self.suportadas
+
+    def vivo(self, board: chess.Board, multipv: int = 3, profundidade: int = 24, go: Optional[str] = None,
+             antes: Optional[List[str]] = None):
         """Começa (ou reinicia) a análise ao vivo da posição; não bloqueia."""
         if not self.ativo or board.is_game_over():
             self.parar()
             return
         with self._trava:
-            self._iniciar(board, multipv, go or f"go depth {int(profundidade)}")
+            self._iniciar(board, multipv, go or f"go depth {int(profundidade)}", antes)
 
     def parar(self):
         with self._trava:
@@ -541,13 +604,14 @@ class MotorVivo:
         return ops, prof
 
     def buscar(self, board: chess.Board, multipv: int, tempo: float,
-               searchmoves: Optional[List[str]] = None) -> (List[Opcao], int):
-        cmd = f"go movetime {int(tempo * 1000)}"
+               searchmoves: Optional[List[str]] = None, antes: Optional[List[str]] = None,
+               nos: Optional[int] = None) -> (List[Opcao], int):
+        cmd = f"go nodes {int(nos)}" if nos else f"go movetime {int(tempo * 1000)}"
         if searchmoves:
             cmd += " searchmoves " + " ".join(searchmoves)
         with self._trava:
-            self._iniciar(board, multipv, cmd)
-            self._fim.wait(tempo + 15)
+            self._iniciar(board, multipv, cmd, antes)
+            self._fim.wait(tempo + 15 if not nos else 120)
             return self.linhas()
 
     def fechar(self):
@@ -668,7 +732,8 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
         try:
             progresso("Lc0 calculando as chances (WDL) dos lances…")
             ucis = [o.uci for o in ops][:12]
-            lops, _ = lc0.buscar(board, len(ucis), float(cfg["tempo"]), ucis)
+            ajustes = lc0_ajustes(cfg, board.turn)
+            lops, _ = lc0.buscar(board, len(ucis), float(cfg["tempo"]), ucis, antes=ajustes)
             por = {o.uci: o for o in lops if o.wdl}
             for o in ops:
                 x = por.get(o.uci)
@@ -680,7 +745,7 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
                 progresso(f"Lc0 completando {len(faltam)} lance(s)…")
             t1 = max(0.5, min(1.5, float(cfg["tempo"]) / 2))
             for o in faltam:
-                wdl = wdl_depois(lc0, board, o.uci, t1)
+                wdl = wdl_depois(lc0, board, o.uci, t1, antes=ajustes)
                 if wdl:
                     o.wdl_sf, o.wdl, o.fonte_wdl = o.wdl, wdl, "Lc0"
                     por[o.uci] = o
@@ -706,8 +771,11 @@ def coletar(fen: str, cfg: Dict, motor: Optional[Motor] = None, progresso=lambda
     return r
 
 
-def wdl_depois(motor, board: chess.Board, uci: str, tempo: float) -> Optional[tuple]:
-    """WDL de quem joga, calculado na posição depois do lance (ponto de vista do adversário, invertido)."""
+def wdl_depois(motor, board: chess.Board, uci: str, tempo: float,
+               antes: Optional[List[str]] = None) -> Optional[tuple]:
+    """WDL de quem joga, calculado na posição depois do lance (ponto de vista do adversário, invertido).
+
+    `antes` deve ser calculado para quem jogou o lance (o estilo continua sendo o dele)."""
     b2 = board.copy()
     b2.push(board.parse_uci(uci))
     if b2.is_game_over():
@@ -715,7 +783,7 @@ def wdl_depois(motor, board: chess.Board, uci: str, tempo: float) -> Optional[tu
         if r == "1/2-1/2":
             return (0, 1000, 0)
         return (1000, 0, 0)                      # quem acabou de jogar deu mate
-    ops, _ = motor.buscar(b2, 1, tempo)
+    ops, _ = motor.buscar(b2, 1, tempo, antes=antes)
     if ops and ops[0].wdl:
         w, d, l = ops[0].wdl
         return (l, d, w)
@@ -788,6 +856,7 @@ def para_candidato(o: Opcao, ref_cp: int, board: Optional[chess.Board] = None, l
             for k, v in notas.items():
                 setattr(c, k, v)
                 c.auto.append(k)
+                c.auto_orig[k] = v
             c.conversao = conversao(board, m)
             c.auto.append("conversao")
             f = filtro_auto(board, o, delta)
