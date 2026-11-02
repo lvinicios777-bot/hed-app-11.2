@@ -211,7 +211,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libgl1 libegl1 libgles2 libmtdev1 libsdl2-2.0-0
-          pip install "kivy==2.3.0" chess certifi
+          pip install "kivy==2.3.0" chess certifi pytest
 
       - name: Stockfish para os testes
         run: |
