@@ -71,6 +71,9 @@ Ao importar lances do motor (Tabuleiro → Enviar ao HED, ou tela Posição):
 - **TF × Conversão:** o app compara o melhor lance forçante (xeque, captura ou ameaça) com o melhor tranquilo. "Fim" = avaliação do motor da TF; "falha" = 2º melhor lance depois da resposta esperada; p = 90% por lance a calcular (provisório) até o Registro ter 5 casos de "achou a linha forçada?". O resultado aparece na tela Posição, no relatório e preenche a tela TF.
 - **WDL saturado:** em posições muito ganhas o WDL do Stockfish dá 100% a todos; nesse caso a perda passa a ser medida pela avaliação do motor (curva do Lichess).
 
+## Novidades da 11.1.2.15 — peças novas
+- Peças desenhadas com o conjunto "cburnett" (o mesmo padrão do Lichess), em imagem de alta resolução, no tabuleiro, no arraste, na promoção e no tabuleiro do plano. Créditos em `pecas/LEIA-ME.md`.
+
 ## Novidades da 11.1.2.14 — Lc0 forçado nos lances do Stockfish e posição livre
 - Tabuleiro/análise: o Lc0 calcula **à força** os 3 lances do Stockfish (searchmoves), mesmo quando discorda, e também o lance que ele próprio prefere. Se o Lc0 não aceitar algum lance (ex.: roque), ele é avaliado pela posição depois do lance.
 - Valores provisórios aparecem com "..."; sem "..." é o cálculo completo.

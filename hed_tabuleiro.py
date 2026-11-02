@@ -5,6 +5,7 @@ Tabuleiro (tocar ou arrastar), barra de avaliação, linhas do Stockfish ao vivo
 seta do melhor lance, navegação pelos lances, explorador Masters/Lichess,
 colar FEN/PGN e envio da posição ao HED.
 """
+import os
 import threading
 import time
 
@@ -34,6 +35,21 @@ CHEIO = {"k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟"}
 CONTORNO = {"k": "♔", "q": "♕", "r": "♖", "b": "♗", "n": "♘", "p": "♙"}
 CINZA, AZUL, VERDE = (0.35, 0.35, 0.35, 1), (0.25, 0.45, 0.75, 1), (0.2, 0.6, 0.35, 1)
 _texturas = {}
+PASTA_PECAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pecas")
+_imagens = {}
+
+
+def imagem_peca(peca):
+    """Textura PNG da peça (conjunto cburnett, o padrão do Lichess); None se faltar o arquivo."""
+    nome = ("w" if peca.color == chess.WHITE else "b") + peca.symbol().upper()
+    if nome not in _imagens:
+        caminho = os.path.join(PASTA_PECAS, nome + ".png")
+        try:
+            from kivy.core.image import Image as CoreImage
+            _imagens[nome] = CoreImage(caminho, mipmap=True).texture if os.path.isfile(caminho) else None
+        except Exception:
+            _imagens[nome] = None
+    return _imagens[nome]
 
 
 def textura(txt, tam, fonte="DejaVuSans"):
@@ -171,6 +187,11 @@ class Tabuleiro(Widget):
                     self._peca(peca, ax - L * 0.6, ay - L * 0.6, L * 1.2)
 
     def _peca(self, peca, x, y, L):
+        tex = imagem_peca(peca)
+        if tex is not None:
+            Color(1, 1, 1, 1)
+            Rectangle(texture=tex, pos=(x + L * 0.02, y + L * 0.02), size=(L * 0.96, L * 0.96))
+            return
         s = peca.symbol().lower()
         cheio, cont = textura(CHEIO[s], L * 0.86), textura(CONTORNO[s], L * 0.86)
         px, py = x + (L - cheio.width) / 2, y + (L - cheio.height) / 2
@@ -263,8 +284,18 @@ class Tabuleiro(Widget):
         caixa = BoxLayout(spacing=dp(4), padding=dp(4))
         branco = self.board.turn == chess.WHITE
         for tipo, s in ((chess.QUEEN, "q"), (chess.ROOK, "r"), (chess.BISHOP, "b"), (chess.KNIGHT, "n")):
-            b = Button(text=CHEIO[s], font_name="DejaVuSans", font_size="44sp", background_normal="",
+            tex = imagem_peca(chess.Piece(tipo, self.board.turn))
+            b = Button(text="" if tex else CHEIO[s], font_name="DejaVuSans", font_size="44sp", background_normal="",
                        background_color=CLARA, color=(1, 1, 1, 1) if branco else (0.1, 0.1, 0.1, 1))
+            if tex:
+                def pintar(w, *_a, tex=tex):
+                    w.canvas.after.clear()
+                    lado = min(w.width, w.height) * 0.9
+                    with w.canvas.after:
+                        Color(1, 1, 1, 1)
+                        Rectangle(texture=tex, size=(lado, lado),
+                                  pos=(w.center_x - lado / 2, w.center_y - lado / 2))
+                b.bind(pos=pintar, size=pintar)
 
             def escolher(_b, tipo=tipo):
                 mv.dismiss()
